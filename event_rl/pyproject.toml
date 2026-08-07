@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "event-rl-poc"
+version = "0.1.0"
+description = "Proof-of-concept event-camera visual RL in MuJoCo/Gymnasium environments."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mujoco",
+    "gymnasium[mujoco]",
+    "stable-baselines3[extra]",
+    "torch",
+    "torchvision",
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "opencv-python",
+    "imageio",
+    "imageio-ffmpeg",
+    "tqdm",
+    "rich",
+    "pyyaml",
+    "tensorboard",
+    "wandb",
+    "pillow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipykernel",
+    "jupyter",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+
+[tool.setuptools]
+# encoder/, env/, scripts/ are plain script folders (no __init__.py, imported
+# via sys.path.insert against __file__-relative paths, not as a real Python
+# package) -- this is a dependency manifest for `pip install -e .`, not an
+# installable package. Without this, setuptools' auto-discovery either finds
+# nothing to package or errors trying to guess one.
+py-modules = []

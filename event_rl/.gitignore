@@ -1,0 +1,82 @@
+# =============================================================
+# Python
+# =============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+# setuptools editable-install metadata (pip install -e .)
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# =============================================================
+# Virtual environments
+# =============================================================
+.venv/
+venv/
+.conda/
+
+# =============================================================
+# Linters / type checkers / test / notebook caches
+# =============================================================
+.mypy_cache/
+# this project's pyproject.toml configures ruff
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# =============================================================
+# Editors / IDEs
+# =============================================================
+# contains a machine-specific absolute interpreter path,
+# not portable to teammates or the cluster
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =============================================================
+# This project's actual generated output
+# (real dir/file names taken from the code, not guessed)
+# =============================================================
+# train.py: model.save(os.path.join("saved_models", experiment_name))
+saved_models/
+# train.py: tensorboard_log=f"./event_rl_tensorboard/{experiment_name}"
+event_rl_tensorboard/
+# wandb's local run cache, created even when WANDB_MODE=disabled
+wandb/
+# visualize_events.py's generated PNGs -- regenerate anytime
+event_viz_output/
+# render_cartpole_world.py's output video
+*.mp4
+*.log
+
+# Data / checkpoints (generic, in case either convention is used later)
+
+data/
+checkpoints/
+# SB3 saves checkpoints as .zip (redundant with saved_models/ above,
+# but safe as a catch-all if a model is ever saved elsewhere)
+*.zip
+
+
+# SLURM / cluster
+# matches submit_gpu_smoketest.sh's #SBATCH --output=slurm_%j.out
+*.out
+*.err
+core.*
+
+# Secrets (not currently used, but never let one slip in accidentally)
+
+.env
+*.env.local
+
+# =============================================================
+# OS junk
+# =============================================================
+.DS_Store
+Thumbs.db
