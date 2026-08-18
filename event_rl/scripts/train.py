@@ -30,7 +30,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 
 from encoder import EventEncoder
 from make_env import make_env
-from callbacks import TemporalResetCallback
+from callbacks import TemporalResetCallback, StatelessTemporalCallback
 
 
 def resolve_checkpoint_path(resume_model: str) -> str:
@@ -94,6 +94,12 @@ def main():
                          help="Save a resumable checkpoint every N timesteps (in addition to the final save). "
                               "Matters for real runs that might exceed the cluster's time limit or get pre-empted "
                               "-- without this, --resume_model has nothing to resume from if a run gets cut off.")
+    parser.add_argument("--stateless_temporal", action="store_true",
+                         help="Ablation: reset TemporalBranch's state after EVERY rollout step instead of only "
+                              "at episode boundaries, effectively disabling cross-step recurrence (each "
+                              "observation still spans its own n_bins time-binned window internally). Compare "
+                              "the reward curve against a normal run to see whether cross-step recurrence "
+                              "actually matters for this task.")
     args = parser.parse_args()
 
     config = {
@@ -110,9 +116,12 @@ def main():
         "channels": args.channels,
         "device": args.device,
         "checkpoint_freq": args.checkpoint_freq,
+        "stateless_temporal": args.stateless_temporal,
     }
 
     experiment_name = f"ppo_event_{int(time.time() * 1000)}"
+    if args.stateless_temporal:
+        experiment_name += "_stateless"
     resuming = args.resume_model is not None
     if resuming:
         config["resumed_from"] = args.resume_model  # visible in the new wandb run's config
@@ -159,21 +168,24 @@ def main():
         name_prefix=experiment_name,
     )
 
-    print(f"Learning (device={config['device']}, resuming={resuming})")
+    # StatelessTemporalCallback (--stateless_temporal): resets TemporalBranch's
+    # state after EVERY rollout step, not just at episode ends -- the Test D
+    # recurrence-ablation variant. TemporalResetCallback (default): resets only
+    # at episode boundaries, matching the normal training behavior. Either way
+    # detach_state() needs no callback -- EventEncoder.forward() already calls
+    # it automatically every forward pass.
+    reset_callback = StatelessTemporalCallback() if config["stateless_temporal"] else TemporalResetCallback()
+
+    print(f"Learning (device={config['device']}, resuming={resuming}, stateless_temporal={config['stateless_temporal']})")
     model.learn(
         total_timesteps=config["total_timesteps"],
         # reset_num_timesteps=False when resuming so num_timesteps/tensorboard's
         # x-axis continue from the checkpoint instead of restarting at 0.
         reset_num_timesteps=not resuming,
-        # TemporalResetCallback: resets TemporalBranch's SNN state whenever an
-        # episode ends during rollout collection (see callbacks.py for why this
-        # has to be a callback, not something inside the env). detach_state()
-        # needs no callback -- EventEncoder.forward() already calls it
-        # automatically every forward pass.
         # CheckpointCallback: periodic saves so a run cut off by the cluster's
         # time limit (or pre-emption) has something to --resume_model from,
         # instead of only ever saving once at the very end.
-        callback=[WandbCallback(), TemporalResetCallback(), checkpoint_callback],
+        callback=[WandbCallback(), reset_callback, checkpoint_callback],
     )
 
     model.save(os.path.join("saved_models", experiment_name))

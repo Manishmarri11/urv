@@ -39,3 +39,24 @@ class TemporalResetCallback(BaseCallback):
         if dones is not None and any(dones):
             self.model.policy.features_extractor.reset()
         return True
+
+
+class StatelessTemporalCallback(BaseCallback):
+    """Ablation variant of TemporalResetCallback: calls
+    model.policy.features_extractor.reset() after EVERY rollout step, not
+    just at episode boundaries -- zeroes TemporalBranch's membrane
+    potential/spike state before each subsequent forward() call, so no
+    memory carries across steps at all (only the within-call 5-frame
+    time-binned window each observation already encodes remains).
+
+    Used to test whether TemporalBranch's cross-step recurrence contributes
+    anything for this task, by comparing a training run using this callback
+    against an otherwise-identical run using TemporalResetCallback.
+
+    Same n_envs=1 caveat as TemporalResetCallback: reset() zeroes the whole
+    batch of state, which is only correct when there's a single environment.
+    """
+
+    def _on_step(self) -> bool:
+        self.model.policy.features_extractor.reset()
+        return True

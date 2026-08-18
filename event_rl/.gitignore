@@ -51,6 +51,8 @@ event_rl_tensorboard/
 wandb/
 # visualize_events.py's generated PNGs -- regenerate anytime
 event_viz_output/
+# render_checkpoint_video.py's generated per-checkpoint videos
+videos/
 # render_cartpole_world.py's output video
 *.mp4
 *.log

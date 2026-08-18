@@ -19,11 +19,14 @@ python -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-# On Linux, plain `pip install torch` from PyPI already bundles CUDA support
-# (unlike the CPU-only build we had to explicitly request on Windows locally)
-# -- no special --index-url needed here. If preflight_check.py's CUDA check
-# still fails after this, it's a driver/allocation issue (see Step 3/4 of the
-# verification guide), not a "wrong torch build" issue.
+# Pinned to 2.5.1/cu124 specifically for broad GPU compatibility -- PyTorch
+# dropped Maxwell (compute capability 5.x, e.g. GTX Titan X) kernel support
+# starting with 2.8.0, and the cluster can hand us any GPU in the pool, so we
+# can't assume a specific card. Installed explicitly (not left to plain
+# `pip install torch`) so this exact build is what lands, not whatever's
+# newest on PyPI that day. If preflight_check.py's CUDA check still fails
+# after this, it's a driver/allocation issue, not a "wrong torch build" one.
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
 pip install -e .
 
 echo ""

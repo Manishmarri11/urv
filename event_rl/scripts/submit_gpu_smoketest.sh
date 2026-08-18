@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=event_rl_smoketest
 #SBATCH --mem=32000
-#SBATCH -p gpu
+#SBATCH -p gpu-preempt
 #SBATCH -G 1
 #SBATCH -N 1
 #SBATCH --time=01:00:00

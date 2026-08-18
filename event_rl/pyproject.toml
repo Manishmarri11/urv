@@ -7,13 +7,13 @@ name = "event-rl-poc"
 version = "0.1.0"
 description = "Proof-of-concept event-camera visual RL in MuJoCo/Gymnasium environments."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "mujoco",
     "gymnasium[mujoco]",
     "stable-baselines3[extra]",
-    "torch",
-    "torchvision",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
     "numpy",
     "scipy",
     "pandas",
