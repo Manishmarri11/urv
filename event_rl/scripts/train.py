@@ -14,6 +14,7 @@ placeholder frame-differencing converter -- swap that one function for the
 real RGB-to-event converter when it's ready; nothing here needs to change).
 """
 import os
+import re
 import sys
 import time
 import argparse
@@ -27,10 +28,12 @@ from wandb.integration.sb3 import WandbCallback
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from encoder import EventEncoder
 from make_env import make_env
-from callbacks import TemporalResetCallback, StatelessTemporalCallback
+from callbacks import TemporalResetCallback, StatelessTemporalCallback, SafeVecNormalizeSaveCallback
 
 
 def resolve_checkpoint_path(resume_model: str) -> str:
@@ -53,6 +56,26 @@ def resolve_checkpoint_path(resume_model: str) -> str:
     )
 
 
+def resolve_vecnormalize_path(checkpoint_path: str):
+    """Finds the VecNormalize running-stats file saved alongside a model
+    checkpoint (CheckpointCallback(save_vecnormalize=True) saves periodic
+    checkpoints as '..._vecnormalize_<N>_steps.pkl'; the final save at the
+    end of training writes '..._vecnormalize.pkl' with no step suffix).
+    Returns None if no match exists -- resuming without it still works, it
+    just restarts reward-normalization statistics from scratch instead of
+    continuing them, which is a soft degradation, not a crash."""
+    m = re.search(r"_(\d+)_steps\.zip$", checkpoint_path)
+    if m:
+        candidate = checkpoint_path[: m.start()] + f"_vecnormalize_{m.group(1)}_steps.pkl"
+        if os.path.isfile(candidate):
+            return candidate
+    if checkpoint_path.endswith(".zip"):
+        candidate = checkpoint_path[: -len(".zip")] + "_vecnormalize.pkl"
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def build_env(config):
     # CartpoleWorld-v0 itself is already registered with max_episode_steps=1000
     # (a hard ceiling); this outer TimeLimit applies config["max_episode_steps"]
@@ -66,7 +89,14 @@ def build_env(config):
         channels=config["channels"],
     )
     env = TimeLimit(env, max_episode_steps=config["max_episode_steps"])
-    return env
+    # Monitor must be wrapped explicitly here: SB3 only auto-adds it when you
+    # hand PPO a raw (non-Vec) env. Since main() builds its own VecEnv/
+    # VecNormalize stack below (needed for reward normalization), that
+    # auto-wrap never happens -- without this, ep_len_mean/ep_rew_mean
+    # logging would silently stop working, since those come from Monitor's
+    # per-episode info dict, not from VecNormalize or the raw env.
+    env = Monitor(env)
+    return DummyVecEnv([lambda: env])
 
 
 def main():
@@ -133,14 +163,32 @@ def main():
         sync_tensorboard=True,
     )
 
-    env = build_env(config)
+    env = build_env(config)  # raw DummyVecEnv, not yet reward-normalized
 
+    # VecNormalize(norm_reward=True): rescales rewards to roughly unit
+    # variance before the value function sees them. Diagnosed need: real
+    # training runs (Test A/D) showed explained_variance stuck at ~0 the
+    # entire run while value_loss climbed steadily (~7 -> ~70+) -- the
+    # classic signature of a value target whose scale keeps drifting (return
+    # scale grows with episode length, which itself grows as the policy
+    # improves). norm_obs=False because observations are already normalized
+    # to [0,1] by event_to_frame.py -- normalizing them again would distort
+    # the actual event-count semantics the network was designed around.
     if resuming:
         checkpoint_path = resolve_checkpoint_path(args.resume_model)
+        vecnorm_path = resolve_vecnormalize_path(checkpoint_path)
+        if vecnorm_path:
+            print(f"Resuming VecNormalize stats from: {vecnorm_path}")
+            env = VecNormalize.load(vecnorm_path, env)
+        else:
+            print("No matching VecNormalize stats found for this checkpoint -- "
+                  "starting reward normalization fresh instead of continuing it.")
+            env = VecNormalize(env, norm_obs=False, norm_reward=True)
         print(f"Resuming from checkpoint: {checkpoint_path}")
         model = PPO.load(checkpoint_path, env=env, device=config["device"])
         print(f"  resumed at num_timesteps={model.num_timesteps}")
     else:
+        env = VecNormalize(env, norm_obs=False, norm_reward=True)
         model = PPO(
             "CnnPolicy",
             env,
@@ -166,6 +214,15 @@ def main():
         save_freq=config["checkpoint_freq"],
         save_path="saved_models",
         name_prefix=experiment_name,
+        # save_vecnormalize=True is intentionally NOT used here -- it has no
+        # error handling around VecNormalize.save(), which can fail on the
+        # cluster's live EGL render context and would crash the whole run.
+        # SafeVecNormalizeSaveCallback below does the same save, defensively.
+    )
+    vecnormalize_callback = SafeVecNormalizeSaveCallback(
+        save_freq=config["checkpoint_freq"],
+        save_path="saved_models",
+        name_prefix=experiment_name,
     )
 
     # StatelessTemporalCallback (--stateless_temporal): resets TemporalBranch's
@@ -185,10 +242,17 @@ def main():
         # CheckpointCallback: periodic saves so a run cut off by the cluster's
         # time limit (or pre-emption) has something to --resume_model from,
         # instead of only ever saving once at the very end.
-        callback=[WandbCallback(), reset_callback, checkpoint_callback],
+        callback=[WandbCallback(), reset_callback, checkpoint_callback, vecnormalize_callback],
     )
 
     model.save(os.path.join("saved_models", experiment_name))
+    try:
+        env.save(os.path.join("saved_models", experiment_name + "_vecnormalize.pkl"))
+    except Exception as e:
+        # Same live-EGL-context pickling risk as SafeVecNormalizeSaveCallback --
+        # training already finished and model.save() above already succeeded,
+        # so this failing shouldn't take that down with it.
+        print(f"WARNING: failed to save final VecNormalize stats: {type(e).__name__}: {e}")
     run.finish()
 
 
