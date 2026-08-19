@@ -4,7 +4,7 @@
 #SBATCH -p gpu-preempt
 #SBATCH -G 1
 #SBATCH -N 1
-#SBATCH --time=03:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=slurm_%j.out
 
 # Test D -- recurrence ablation. Identical to Test A (submit_stnet_long_run.sh)

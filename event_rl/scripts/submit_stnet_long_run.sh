@@ -4,17 +4,18 @@
 #SBATCH -p gpu-preempt
 #SBATCH -G 1
 #SBATCH -N 1
-#SBATCH --time=03:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=slurm_%j.out
 
 # Test A -- the main real-training test. Same environment/converter as the
 # smoke test, but ~24 PPO update cycles (50,000 / n_steps=2048) instead of
 # the smoke test's 32 (2048 / n_steps=64) -- enough to see whether ep_rew_mean
-# actually breaks away from the ~5 random baseline. Time budget: measured
-# ~10-11 fps sustained on the A16 during the smoke test -> 50,000 steps is
-# roughly 80-90 min of compute; 03:00:00 leaves buffer for queueing/startup/
-# checkpoint I/O. Adjust --time down if your cluster charges heavily for
-# unused wall-clock, or up if you raise --total_timesteps below.
+# actually breaks away from the ~5 random baseline. Time budget: the first
+# real run measured ~2.94 hours actual (fps drops to ~4-5 sustained once
+# training-phase compute -- n_epochs=10 x n_steps/batch_size=32 minibatches
+# per iteration -- dominates wall-clock, not just rollout collection) and got
+# cut off by an earlier 03:00:00 limit one iteration short of finishing.
+# 04:00:00 gives real margin instead of finishing right at the wire.
 
 module load python/3.13 2>/dev/null || true
 source .venv/bin/activate

@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "mujoco",
     "gymnasium[mujoco]",
-    "stable-baselines3[extra]",
+    "stable-baselines3[extra]>=2.3.0",
     "torch==2.5.1",
     "torchvision==0.20.1",
     "numpy",
