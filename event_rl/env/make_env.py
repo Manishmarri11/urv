@@ -14,6 +14,7 @@ from event_wrapper import EventsOnlyCartpoleWrapper  # noqa: E402
 
 
 def make_env(
+    env_id: str = "CartpoleWorld-v0",
     obs_height: int = 128,
     obs_width: int = 128,
     render_width: int = 480,
@@ -27,10 +28,21 @@ def make_env(
 ):
     """Returns a Gym env whose observation is (2*n_bins*channels, obs_height,
     obs_width) event-derived frames only -- the exact shape EventEncoder
-    expects. Currently backed by CartpoleWorld-v0 + a fake RGB-to-event
-    converter (see fake_events.py); swap the body of this function for the
-    real environment/converter when ready."""
+    expects. Backed by a fake RGB-to-event converter either way (see
+    fake_events.py); swap that for the real converter when ready.
+
+    env_id/camera_name must be a matching pair:
+      - "CartpoleWorld-v0" (default) only has camera "side" -- the original
+        single-camera, single-axis environment.
+      - "CartpoleWorldDualCamera-v0" (your environment teammate's in-progress
+        2D/cliff-path environment) only has "world" (3rd-person convenience
+        view) or "pole" (the true egocentric feed they intend for the event
+        pipeline). NOT YET RUNNABLE as of this writing -- its XML references
+        texture/heightmap assets (env/assets/) that don't exist in this repo
+        yet; get them from your teammate before trying this env_id.
+    """
     return EventsOnlyCartpoleWrapper(
+        env_id=env_id,
         render_width=render_width,
         render_height=render_height,
         camera_name=camera_name,

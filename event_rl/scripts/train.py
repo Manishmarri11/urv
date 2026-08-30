@@ -83,6 +83,8 @@ def build_env(config):
     # for fast iteration (shorter episodes = faster wall-clock feedback), not
     # a bug or an accidental double-wrap.
     env = make_env(
+        env_id=config["env_id"],
+        camera_name=config["camera_name"],
         obs_height=config["obs_height"],
         obs_width=config["obs_width"],
         n_bins=config["n_bins"],
@@ -109,6 +111,16 @@ def main():
     parser.add_argument("--features_dim", type=int, default=256, help="EventEncoder output vector size")
     parser.add_argument("--max_episode_steps", type=int, default=300, help="")
     parser.add_argument("--wandb_project", type=str, default="event_rl", help="")
+    parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
+                         help="Real MuJoCo env to wrap. 'CartpoleWorld-v0' (default, single-axis, camera "
+                              "'side') or 'CartpoleWorldDualCamera-v0' (environment teammate's in-progress "
+                              "2D/cliff-path env, cameras 'world'/'pole' -- NOT runnable yet, needs "
+                              "env/assets/ texture+heightmap files that aren't in this repo yet). "
+                              "--camera_name must match whichever env_id you choose.")
+    parser.add_argument("--camera_name", type=str, default="side",
+                         help="Must be valid for --env_id: 'side' for CartpoleWorld-v0; 'pole' (true "
+                              "egocentric feed, intended for the event pipeline) or 'world' (3rd-person "
+                              "convenience view) for CartpoleWorldDualCamera-v0.")
     parser.add_argument("--obs_height", type=int, default=128, help="downscaled render height fed to the event pipeline")
     parser.add_argument("--obs_width", type=int, default=128, help="downscaled render width fed to the event pipeline")
     parser.add_argument("--n_bins", type=int, default=5, help="must match EventEncoder's n_bins (default 5)")
@@ -140,6 +152,8 @@ def main():
         "learning_rate": args.learning_rate,
         "features_dim": args.features_dim,
         "max_episode_steps": args.max_episode_steps,
+        "env_id": args.env_id,
+        "camera_name": args.camera_name,
         "obs_height": args.obs_height,
         "obs_width": args.obs_width,
         "n_bins": args.n_bins,

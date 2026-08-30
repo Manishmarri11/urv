@@ -1,19 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Events-only Gym wrapper around CartpoleWorld-v0.
+"""Events-only Gym wrapper around either real cartpole environment.
 
-Wraps (never modifies) the real cartpole_world_env.CartpoleWorldEnv. Renders
-each step, converts consecutive frames into a synthetic event stream via
-fake_events.rgb_to_events() (the single swap point for the real RGB-to-event
-converter), and feeds those events through the REAL event_to_frame.py into
-the exact (2*n_bins*channels, H, W) shape EventEncoder expects.
+Wraps (never modifies) the real cartpole_world_env.CartpoleWorldEnv or
+cartpole_world_env_dual_camera.CartpoleWorldDualCameraEnv (your environment
+teammate's second, in-progress env -- 2D tilt/cart-correction, cliff-path
+terrain, "world"/"pole" cameras instead of the original single "side" one).
+Renders each step, converts consecutive frames into a synthetic event stream
+via fake_events.rgb_to_events() (the single swap point for the real
+RGB-to-event converter), and feeds those events through the REAL
+event_to_frame.py into the exact (2*n_bins*channels, H, W) shape
+EventEncoder expects.
 
-RESEARCH CONSTRAINT ENFORCED HERE: CartpoleWorldEnv's real observation (the
-4-vector [cart_pos, pole_angle, cart_vel, pole_angvel]) is read internally
-(MujocoEnv.step()/reset() require it) but never returned to the agent -- this
-wrapper's own observation_space and the values it returns are built entirely
-from event-derived frames. Reward, terminated, and truncated are passed
-through from the real env unchanged (those aren't part of the events-only
-constraint -- only the observation is).
+RESEARCH CONSTRAINT ENFORCED HERE: the real environment's ground-truth
+observation (4 elements for CartpoleWorld-v0, 8 for CartpoleWorldDualCamera-v0)
+is read internally (MujocoEnv.step()/reset() require it) but never returned
+to the agent -- this wrapper's own observation_space and the values it
+returns are built entirely from event-derived frames, regardless of which
+real env or how many ground-truth dimensions it has. Reward, terminated, and
+truncated are passed through from the real env unchanged (those aren't part
+of the events-only constraint -- only the observation is).
 """
 import os
 import sys
@@ -32,6 +37,7 @@ if _ENCODER_DIR not in sys.path:
     sys.path.insert(0, _ENCODER_DIR)
 
 import cartpole_world_env  # noqa: E402,F401  (registers "CartpoleWorld-v0", read-only import)
+import cartpole_world_env_dual_camera  # noqa: E402,F401  (registers "CartpoleWorldDualCamera-v0", read-only import)
 from fake_events import rgb_to_events  # noqa: E402
 from event_to_frame import events_to_frames  # noqa: E402  (real module, read-only import)
 
@@ -41,6 +47,7 @@ class EventsOnlyCartpoleWrapper(gym.Env):
 
     def __init__(
         self,
+        env_id: str = "CartpoleWorld-v0",
         render_width: int = 480,
         render_height: int = 320,
         camera_name: str = "side",
@@ -53,8 +60,15 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         seed: Optional[int] = None,
     ):
         super().__init__()
+        # env_id/camera_name must match: "CartpoleWorld-v0" only has camera
+        # "side" (the old default); "CartpoleWorldDualCamera-v0" only has
+        # "world" (3rd-person convenience view) and "pole" (the true
+        # egocentric feed your environment teammate intends for the event
+        # pipeline -- see their own comment in render_cartpole_world.py).
+        # Passing "side" with the dual-camera env (or vice versa) fails at
+        # gym.make() with an unknown-camera error, not a silent misconfig.
         self._cartpole = gym.make(
-            "CartpoleWorld-v0",
+            env_id,
             render_mode="rgb_array",
             width=render_width,
             height=render_height,
@@ -75,9 +89,12 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(obs_channels, obs_height, obs_width), dtype=np.float32
         )
-        # Real, unmodified action space from CartpoleWorldEnv (Box(-3,3,(1,)) --
-        # confirmed by reading the XML's slide_motor ctrlrange) -- action is NOT
-        # part of the events-only constraint, only the observation is.
+        # Real, unmodified action space -- Box(-3,3,(1,)) for CartpoleWorld-v0,
+        # Box(-3,3,(2,)) for CartpoleWorldDualCamera-v0 (confirmed by reading
+        # each XML's motor ctrlrange). Read dynamically from whichever env_id
+        # was requested rather than hardcoded, so this line needs no edit when
+        # switching between them -- action is NOT part of the events-only
+        # constraint, only the observation is.
         self.action_space = self._cartpole.action_space
 
         self._prev_frame_small = None  # (H, W, 3) uint8, downscaled
