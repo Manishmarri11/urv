@@ -166,6 +166,12 @@ def main():
     experiment_name = f"ppo_event_{int(time.time() * 1000)}"
     if args.stateless_temporal:
         experiment_name += "_stateless"
+    # Printed on its own clearly-greppable line so a wrapping shell script
+    # (e.g. a SLURM submit script that wants to auto-plot this run's curves
+    # afterward) can extract it from the job log without needing it passed
+    # in or predicted in advance -- experiment_name is timestamp-generated,
+    # not knowable before this line runs.
+    print(f"Experiment name: {experiment_name}")
     resuming = args.resume_model is not None
     if resuming:
         config["resumed_from"] = args.resume_model  # visible in the new wandb run's config
