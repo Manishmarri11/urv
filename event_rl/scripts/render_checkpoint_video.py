@@ -41,6 +41,13 @@ def main():
     parser.add_argument("--checkpoint", type=str, required=True,
                          help="Full path, or a name under saved_models/, of the checkpoint to load "
                               "(same contract as train.py's --resume_model).")
+    parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
+                         help="Must match whatever env_id the checkpoint was actually trained with "
+                              "(train.py's --env_id) -- a mismatch risks an action-space mismatch, not "
+                              "just a visually wrong video.")
+    parser.add_argument("--camera_name", type=str, default="side",
+                         help="Must match --env_id and whatever camera_name the checkpoint was trained "
+                              "with (train.py's --camera_name).")
     parser.add_argument("--n_episodes", type=int, default=10, help="")
     parser.add_argument("--max_episode_steps", type=int, default=300,
                          help="must match the value used during training")
@@ -62,7 +69,8 @@ def main():
     out_dir = os.path.join(args.out_dir, checkpoint_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    env = make_env(obs_height=args.obs_height, obs_width=args.obs_width,
+    env = make_env(env_id=args.env_id, camera_name=args.camera_name,
+                    obs_height=args.obs_height, obs_width=args.obs_width,
                     n_bins=args.n_bins, channels=args.channels)
     env = TimeLimit(env, max_episode_steps=args.max_episode_steps)
 

@@ -10,12 +10,23 @@ Exits 0 and prints "ALL CHECKS PASSED" only if everything needed for a real
 training run actually works. Exits 1 with a specific, actionable message
 otherwise -- never silently continues past a real problem.
 """
+import argparse
 import os
 import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_SCRIPT_DIR, "..", "env"))
 sys.path.insert(0, os.path.join(_SCRIPT_DIR, "..", "encoder"))
+
+_parser = argparse.ArgumentParser(description="Pre-flight checks before a real training job")
+_parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
+                      help="Must match whatever env_id the real training job will use -- checking the "
+                           "wrong one gives false confidence instead of actually validating what's about "
+                           "to run (e.g. CartpoleWorldDualCamera-v0 needs env/assets/ present, which "
+                           "checking CartpoleWorld-v0 would never catch).")
+_parser.add_argument("--camera_name", type=str, default="side",
+                      help="Must match --env_id (e.g. 'pole' or 'world' for CartpoleWorldDualCamera-v0).")
+_args = _parser.parse_args()
 
 failures = []
 
@@ -95,8 +106,9 @@ print(f"  MUJOCO_GL env var: {os.environ.get('MUJOCO_GL', '(not set)')}")
 
 def _render():
     import cartpole_world_env  # noqa: F401  (registers CartpoleWorld-v0)
+    import cartpole_world_env_dual_camera  # noqa: F401  (registers CartpoleWorldDualCamera-v0)
     import gymnasium as gym
-    env = gym.make("CartpoleWorld-v0", render_mode="rgb_array", width=480, height=320, camera_name="side")
+    env = gym.make(_args.env_id, render_mode="rgb_array", width=480, height=320, camera_name=_args.camera_name)
     env.reset(seed=0)
     frame = env.render()
     env.close()
@@ -104,7 +116,7 @@ def _render():
     return f"got a real {frame.shape} frame"
 
 
-check("real render through CartpoleWorld-v0 (needs MUJOCO_GL set correctly on a headless node)", _render)
+check(f"real render through {_args.env_id} (needs MUJOCO_GL set correctly on a headless node)", _render)
 
 print()
 print("=" * 70)
@@ -118,7 +130,7 @@ def _full_pipeline():
     from encoder import EventEncoder
     from stable_baselines3 import PPO
 
-    env = make_env(obs_height=128, obs_width=128)
+    env = make_env(env_id=_args.env_id, camera_name=_args.camera_name, obs_height=128, obs_width=128)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = PPO(
         "CnnPolicy", env,
