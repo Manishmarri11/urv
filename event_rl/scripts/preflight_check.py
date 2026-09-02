@@ -26,6 +26,10 @@ _parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
                            "checking CartpoleWorld-v0 would never catch).")
 _parser.add_argument("--camera_name", type=str, default="side",
                       help="Must match --env_id (e.g. 'pole' or 'world' for CartpoleWorldDualCamera-v0).")
+_parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
+                      help="Must match whatever event_source the real training job will use -- 'v2e' "
+                           "exercises the real DVS simulation (env/rgb_to_event/v2e_events.py) instead of the fake "
+                           "placeholder, so a training-job-shaped preflight run should pass this.")
 _args = _parser.parse_args()
 
 failures = []
@@ -130,7 +134,8 @@ def _full_pipeline():
     from encoder import EventEncoder
     from stable_baselines3 import PPO
 
-    env = make_env(env_id=_args.env_id, camera_name=_args.camera_name, obs_height=128, obs_width=128)
+    env = make_env(env_id=_args.env_id, camera_name=_args.camera_name, obs_height=128, obs_width=128,
+                    event_source=_args.event_source)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = PPO(
         "CnnPolicy", env,

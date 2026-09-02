@@ -48,6 +48,10 @@ def main():
     parser.add_argument("--camera_name", type=str, default="side",
                          help="Must match --env_id and whatever camera_name the checkpoint was trained "
                               "with (train.py's --camera_name).")
+    parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
+                         help="Must match whatever event_source the checkpoint was actually trained with "
+                              "(train.py's --event_source) -- a mismatch means the policy sees a "
+                              "meaningfully different observation distribution than it was trained on.")
     parser.add_argument("--n_episodes", type=int, default=10, help="")
     parser.add_argument("--max_episode_steps", type=int, default=300,
                          help="must match the value used during training")
@@ -71,7 +75,8 @@ def main():
 
     env = make_env(env_id=args.env_id, camera_name=args.camera_name,
                     obs_height=args.obs_height, obs_width=args.obs_width,
-                    n_bins=args.n_bins, channels=args.channels)
+                    n_bins=args.n_bins, channels=args.channels,
+                    event_source=args.event_source)
     env = TimeLimit(env, max_episode_steps=args.max_episode_steps)
 
     # No env= passed to load() -- inference-only (.predict()), never .learn()

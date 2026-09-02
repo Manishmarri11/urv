@@ -5,11 +5,20 @@ Wraps (never modifies) the real cartpole_world_env.CartpoleWorldEnv or
 cartpole_world_env_dual_camera.CartpoleWorldDualCameraEnv (your environment
 teammate's second, in-progress env -- 2D tilt/cart-correction, cliff-path
 terrain, "world"/"pole" cameras instead of the original single "side" one).
-Renders each step, converts consecutive frames into a synthetic event stream
-via fake_events.rgb_to_events() (the single swap point for the real
-RGB-to-event converter), and feeds those events through the REAL
-event_to_frame.py into the exact (2*n_bins*channels, H, W) shape
-EventEncoder expects.
+Renders each step and converts consecutive frames into an event stream via
+one of two interchangeable converters, both under rgb_to_event/
+(event_source=):
+  - "fake" (default): rgb_to_event/fake_events.py's rgb_to_events(), a
+    stateless two-frame diff-and-threshold placeholder with
+    randomly-assigned timestamps.
+  - "v2e": rgb_to_event/v2e_events.py's V2EEventGenerator, backed by a real,
+    stateful DVS camera simulation (a vendored extraction of SensorsINI/v2e's
+    EventEmulator) -- real per-pixel threshold mismatch, leak/shot noise,
+    and sub-frame-resolved event timestamps instead of random ones. See
+    that module's docstring for why this needs a running simulation clock
+    instead of a per-step two-frame diff.
+Either way, those events get fed through the REAL event_to_frame.py into the
+exact (2*n_bins*channels, H, W) shape EventEncoder expects.
 
 RESEARCH CONSTRAINT ENFORCED HERE: the real environment's ground-truth
 observation (4 elements for CartpoleWorld-v0, 8 for CartpoleWorldDualCamera-v0)
@@ -35,10 +44,14 @@ if _ENV_DIR not in sys.path:
 _ENCODER_DIR = os.path.join(_ENV_DIR, "..", "encoder")
 if _ENCODER_DIR not in sys.path:
     sys.path.insert(0, _ENCODER_DIR)
+_RGB_TO_EVENT_DIR = os.path.join(_ENV_DIR, "rgb_to_event")
+if _RGB_TO_EVENT_DIR not in sys.path:
+    sys.path.insert(0, _RGB_TO_EVENT_DIR)
 
 import cartpole_world_env  # noqa: E402,F401  (registers "CartpoleWorld-v0", read-only import)
 import cartpole_world_env_dual_camera  # noqa: E402,F401  (registers "CartpoleWorldDualCamera-v0", read-only import)
 from fake_events import rgb_to_events  # noqa: E402
+from v2e_events import V2EEventGenerator  # noqa: E402
 from event_to_frame import events_to_frames  # noqa: E402  (real module, read-only import)
 
 
@@ -57,9 +70,13 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         channels: int = 3,
         event_threshold: float = 0.015,
         max_count: float = 5.0,
+        event_source: str = "fake",
         seed: Optional[int] = None,
     ):
         super().__init__()
+        if event_source not in ("fake", "v2e"):
+            raise ValueError(f"event_source must be 'fake' or 'v2e', got {event_source!r}")
+        self.event_source = event_source
         # env_id/camera_name must match: "CartpoleWorld-v0" only has camera
         # "side" (the old default); "CartpoleWorldDualCamera-v0" only has
         # "world" (3rd-person convenience view) and "pole" (the true
@@ -97,21 +114,21 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         # constraint, only the observation is.
         self.action_space = self._cartpole.action_space
 
-        self._prev_frame_small = None  # (H, W, 3) uint8, downscaled
+        self._prev_frame_small = None  # (H, W, 3) uint8, downscaled -- event_source="fake" only
+        self._v2e_gen = None  # event_source="v2e" only
+        self._sim_time = 0.0  # running clock EventEmulator needs -- event_source="v2e" only
+        if self.event_source == "v2e":
+            self._v2e_gen = V2EEventGenerator(seed=seed if seed is not None else 0)
 
     def _render_downscaled(self) -> np.ndarray:
         frame = self._cartpole.render()  # (render_height, render_width, 3) uint8
         img = Image.fromarray(frame).resize((self.obs_w, self.obs_h), Image.BILINEAR)
         return np.asarray(img, dtype=np.uint8)  # (obs_h, obs_w, 3)
 
-    def _events_to_obs(self, prev_small: np.ndarray, curr_small: np.ndarray) -> np.ndarray:
-        x, y, polarity, t = rgb_to_events(
-            prev_small, curr_small, t_start=0.0, t_end=self._step_dt,
-            threshold=self.event_threshold, rng=self._rng,
-        )
+    def _frames_from_events(self, x, y, polarity, t, t_start: float, t_end: float) -> np.ndarray:
         pos_frames, neg_frames = events_to_frames(
             x, y, polarity, t, height=self.obs_h, width=self.obs_w,
-            t_start=0.0, t_end=self._step_dt, n_bins=self.n_bins,
+            t_start=t_start, t_end=t_end, n_bins=self.n_bins,
             channels=self.channels, max_count=self.max_count,
         )
         # pos_frames then neg_frames, each n_bins tensors (channels,H,W) --
@@ -120,24 +137,53 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         frames = [f.numpy() for f in pos_frames] + [f.numpy() for f in neg_frames]
         return np.concatenate(frames, axis=0).astype(np.float32)  # (2*n_bins*channels, H, W)
 
+    def _events_to_obs_fake(self, prev_small: np.ndarray, curr_small: np.ndarray) -> np.ndarray:
+        x, y, polarity, t = rgb_to_events(
+            prev_small, curr_small, t_start=0.0, t_end=self._step_dt,
+            threshold=self.event_threshold, rng=self._rng,
+        )
+        return self._frames_from_events(x, y, polarity, t, t_start=0.0, t_end=self._step_dt)
+
+    def _events_to_obs_v2e(self, curr_small: np.ndarray) -> np.ndarray:
+        # V2EEventGenerator is stateful/streaming (see its module docstring)
+        # -- it needs one call per frame at a strictly increasing timestamp,
+        # not a two-frame diff, so this wrapper owns a running sim clock
+        # instead of a stored previous frame.
+        t_start = self._sim_time
+        self._sim_time += self._step_dt
+        x, y, polarity, t = self._v2e_gen.generate(curr_small, self._sim_time)
+        return self._frames_from_events(x, y, polarity, t, t_start=t_start, t_end=self._sim_time)
+
     def reset(self, *, seed=None, options=None):
         _real_obs, info = self._cartpole.reset(seed=seed)  # real_obs (4-vec) read but never exposed
         curr_small = self._render_downscaled()
-        self._prev_frame_small = curr_small
-        # First-frame case: no real previous frame exists yet. Rather than a
-        # separate special-cased "return zeros" path, call the same event
-        # pipeline with prev==curr -- the diff is naturally exactly zero
-        # everywhere, so events_to_frames() naturally returns all-zero
-        # frames through the ordinary code path (one fewer code path to get
-        # wrong, per the same event math either way).
-        obs = self._events_to_obs(curr_small, curr_small)
+        if self.event_source == "v2e":
+            self._v2e_gen.reset()
+            self._sim_time = 0.0
+            # First call to a freshly (re)constructed EventEmulator always
+            # returns no events by its own design (it just initializes
+            # internal photoreceptor/threshold state) -- gives the same
+            # all-zero first observation as the "fake" path's prev==curr
+            # trick, for free, through the ordinary code path.
+            obs = self._events_to_obs_v2e(curr_small)
+        else:
+            self._prev_frame_small = curr_small
+            # First-frame case: no real previous frame exists yet. Rather
+            # than a separate special-cased "return zeros" path, call the
+            # same event pipeline with prev==curr -- the diff is naturally
+            # exactly zero everywhere, so events_to_frames() naturally
+            # returns all-zero frames through the ordinary code path.
+            obs = self._events_to_obs_fake(curr_small, curr_small)
         return obs, info
 
     def step(self, action):
         _real_obs, reward, terminated, truncated, info = self._cartpole.step(action)
         curr_small = self._render_downscaled()
-        obs = self._events_to_obs(self._prev_frame_small, curr_small)
-        self._prev_frame_small = curr_small
+        if self.event_source == "v2e":
+            obs = self._events_to_obs_v2e(curr_small)
+        else:
+            obs = self._events_to_obs_fake(self._prev_frame_small, curr_small)
+            self._prev_frame_small = curr_small
         return obs, reward, terminated, truncated, info
 
     def render(self):

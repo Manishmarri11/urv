@@ -4,7 +4,8 @@ Event-native representation learning for RL. See the project roadmap for the
 full picture (pipeline, phases, team dependencies). This README documents the
 representational-learning-to-PPO side of the project — `encoder/event_to_frame.py`,
 `encoder/stnet_modules.py`, `encoder/encoder.py`, `env/event_wrapper.py`,
-`scripts/callbacks.py`, `scripts/train.py`, `scripts/render_checkpoint_video.py`
+`env/rgb_to_event/v2e_events.py`, `scripts/callbacks.py`, `scripts/train.py`,
+`scripts/render_checkpoint_video.py`
 — what each file does, its exact contract, and how they fit together, so the
 source files can stay short and comment-light.
 
@@ -16,8 +17,10 @@ visually-evaluable policy. One full step, traced start to finish:
 ```
 env/event_wrapper.py (EventsOnlyCartpoleWrapper.step)
   │  steps the real MuJoCo cartpole, renders the new frame
-  │  diffs it against the previous frame via fake_events.rgb_to_events()
-  │  (not part of this README -- the RGB-to-event teammate's swap point)
+  │  converts it to events via one of two interchangeable sources
+  │  (event_source=): "fake" (fake_events.rgb_to_events(), a placeholder
+  │  two-frame diff) or "v2e" (v2e_events.V2EEventGenerator, a real DVS
+  │  camera simulation -- see the env/rgb_to_event/v2e_events.py section below)
   ▼
 encoder/event_to_frame.py (events_to_frames)
   │  buckets the raw (x,y,polarity,t) events into 5 positive + 5 negative
@@ -230,12 +233,9 @@ Wraps, never modifies, either real environment:
 - `"CartpoleWorld-v0"` (`env/cartpole_world_env.py`) — single camera
   (`"side"`), 1D action space.
 - `"CartpoleWorldDualCamera-v0"` (`env/cartpole_world_env_dual_camera.py`,
-  environment teammate's in-progress work) — cameras `"world"`
-  (3rd-person convenience view) or `"pole"` (the true egocentric feed
-  intended for the event pipeline), 2D action space, cliff-path terrain.
-  **Not runnable yet** — its XML references texture/heightmap assets under
-  `env/assets/` that aren't in this repo; get them from the environment
-  teammate before passing `env_id="CartpoleWorldDualCamera-v0"`.
+  environment teammate's work) — cameras `"world"` (3rd-person convenience
+  view) or `"pole"` (the true egocentric feed intended for the event
+  pipeline), 2D action space, cliff-path terrain.
 
 `env_id`/`camera_name` must be a matching pair — passing `"side"` with the
 dual-camera env (or vice versa) fails loudly at `gym.make()`, not silently.
@@ -243,8 +243,9 @@ dual-camera env (or vice versa) fails loudly at `gym.make()`, not silently.
 Each `step()`/`reset()`: steps or resets the real env (its true numeric
 observation is read, since `MujocoEnv` requires it internally, but is never
 returned — this is where the events-only research constraint is actually
-enforced), renders the new frame, diffs it against the previous stored frame
-via `fake_events.rgb_to_events()`, converts that into frames via
+enforced), renders the new frame, converts it to events via whichever
+`event_source` was requested (`"fake"` or `"v2e"` — see the two branch
+methods below and the `v2e_events.py` section), converts that into frames via
 `event_to_frame.events_to_frames()`, and returns the concatenated
 `(2*n_bins*channels, H, W)` result as the observation. Reward/terminated/
 truncated pass straight through from the real env, untouched — the events-only
@@ -252,6 +253,66 @@ constraint applies only to the observation.
 
 `action_space` is copied verbatim from whichever real env was requested, so
 it adapts automatically to 1D or 2D actions with no code change needed.
+
+The two `event_source` branches need different bookkeeping between steps,
+because the two converters have fundamentally different calling
+conventions:
+
+- **`_events_to_obs_fake`** — `fake_events.rgb_to_events()` is stateless: it
+  diffs `self._prev_frame_small` (stored after every step) against the new
+  frame, always over the fixed window `[0, step_dt)`.
+- **`_events_to_obs_v2e`** — `V2EEventGenerator` is stateful/streaming (see
+  its own module docstring): it needs one call per frame at a *strictly
+  increasing* timestamp, not a two-frame diff. The wrapper tracks a running
+  `self._sim_time` clock instead of a stored previous frame, advancing it by
+  `step_dt` each call.
+
+Both branches share `_frames_from_events()` for the last step (bucket
+`(x,y,polarity,t)` into `event_to_frame.events_to_frames()`), so the two
+converters are genuinely interchangeable from that point on.
+
+## `env/rgb_to_event/v2e_events.py` — `V2EEventGenerator`, the real RGB-to-event converter
+
+The real implementation of the RGB-to-event swap point `fake_events.py`
+stood in for — pass `event_source="v2e"` to `make_env()`/`train.py`
+(`--event_source v2e`)/`render_checkpoint_video.py`/`preflight_check.py` to
+use it instead of the fake placeholder. Default everywhere is still
+`"fake"`, so nothing about existing runs changes unless you opt in.
+
+Backed by `env/rgb_to_event/v2e_emulator.py`'s `EventEmulator`, a standalone,
+framework-free extraction of **[v2e](https://github.com/SensorsINI/v2e)**'s
+(SensorsINI) real DVS camera simulation — per-pixel threshold mismatch
+(`sigma_thres`), leak events (`leak_rate_hz`), shot noise
+(`shot_noise_rate_hz`), and photoreceptor lowpass filtering (`cutoff_hz`),
+plus sub-frame-resolved event timestamps derived from how many
+threshold-crossings each pixel actually needed — not the fake path's
+uniformly-random ones. `env/rgb_to_event/v2e_emulator_utils.py` holds the underlying
+math (lin-log intensity mapping, IIR lowpass, event quantization) verbatim
+from the same source. See `v2e_emulator.py`'s module docstring for exactly
+what was stripped from the original (GUI display windows, the AEDat/HDF5
+file-output writers — one of which pulls in `dv_processing`, a real-hardware
+binding with no reason to install here — and single-pixel debug recording)
+and why: none of it survives contact with "runs headless on a cluster,
+consumes events in-memory."
+
+`V2EEventGenerator.generate(frame_rgb, t)` converts the RGB frame to
+grayscale via Rec.709 luma weights (matching this project's own inspo
+codebase's `eventCamera.py`, not cv2's default BT.601 coefficients), feeds
+it to the emulator, and reorders v2e's native `[t,x,y,p]` event columns into
+the `(x,y,polarity,t)` order `event_to_frame.events_to_frames()` expects.
+`.reset()` replaces the whole `EventEmulator` instance rather than calling
+its own (incomplete) `.reset()` — see the method's docstring for why a
+partial reset would raise `ValueError` on the next episode's first frame.
+
+**Tuning note, same category as `event_to_frame.py`'s `max_count`**: the
+constructor's defaults (`pos_thres=neg_thres=0.2`, `sigma_thres=0.03`,
+`leak_rate_hz=0.1`, `cutoff_hz=shot_noise_rate_hz=0`) are v2e's own
+generic defaults, not tuned against this project's actual rendered scene
+(checkered ground, textured terrain, specific camera distance/motion
+speed). Watch the "no signal events generated for frame" warnings and the
+actual nonzero-pixel counts in early training — too-high thresholds starve
+the policy of any signal at all, too-low thresholds saturate every frame
+with noise.
 
 ## `scripts/callbacks.py` — controlling `EventEncoder`'s hidden state from outside
 
@@ -324,3 +385,91 @@ resets every step instead — otherwise you'd be evaluating the model under a
 different reset policy than it was actually trained under, which would make
 the results misleading. Records `env.render()` (the true visual scene) for
 the video, not the event tensors the policy actually sees underneath.
+
+## `env/rgb_to_event/` — verification status of the real (`v2e`) converter
+
+What's actually been run and passed, not just written and assumed to work:
+
+1. **Direct generator test** (`V2EEventGenerator` in isolation, via
+   `make_env(event_source="v2e")`): `reset()` produces an all-zero
+   observation (correct — `EventEmulator`'s first frame only initializes
+   internal state, fires no events by design), then 10 `step()` calls with
+   random actions produce real, nonzero event counts that track the
+   cart/pole actually moving — confirming events are genuinely derived from
+   scene motion, not synthetic/random noise.
+2. **Regression check**: the default `event_source="fake"` path re-run
+   after wiring `"v2e"` in, producing the same shapes/behavior as before —
+   confirms adding the real converter didn't disturb the existing placeholder
+   path.
+3. **`scripts/preflight_check.py --event_source v2e`** — the project's own
+   pre-cluster-job gate: package imports, a real headless MuJoCo render, and
+   one full real PPO update through `make_env → EventEncoder → PPO`, all
+   with the real converter live. Passed every check except
+   `torch.cuda available` (this machine has no GPU — the same single
+   expected failure every local run on this machine has had, `fake` or
+   `v2e`).
+4. **Multi-episode training stress test** — 1,000 timesteps,
+   `--event_source v2e`, `--max_episode_steps 100` (so multiple episodes,
+   multiple `EventsOnlyCartpoleWrapper.reset()` calls, each one
+   reconstructing a fresh `EventEmulator`): completed cleanly, exit code 0,
+   `ep_len_mean`/`ep_rew_mean` logging intact, no crashes across repeated
+   resets.
+5. **Re-verified after the `rgb_to_event/` reorg** — re-ran checks 2 and 3
+   above after moving `fake_events.py`/`v2e_events.py`/`v2e_emulator.py`/
+   `v2e_emulator_utils.py` into their own subdirectory and updating every
+   import path; both still pass identically.
+
+None of this used a GPU (this machine has none) or the real v2e CLI tool —
+everything above ran through this project's own scripts, on CPU, end to end.
+
+**Input → output, concretely**: `V2EEventGenerator.generate()` takes exactly
+what `EventsOnlyCartpoleWrapper._render_downscaled()` already produces from
+the real MuJoCo camera — an `(H, W, 3)` `uint8` RGB frame (`env.render()`,
+downscaled via `PIL`) — and a timestamp. It returns `(x, y, polarity, t)`:
+four parallel 1D arrays (the same four-array contract `fake_events.py`
+already used), covering whatever events fired since the previous frame.
+
+**How that connects into Manish's representation-learning side** — this is
+*not* `EventFrameBuilder` (the streaming buffer meant for events trickling
+in piecemeal across several calls before a frame is needed): each
+`V2EEventGenerator.generate()` call already returns one RL step's complete,
+time-bounded batch of events in one shot, which is exactly what
+`events_to_frames()` (the batch entry point) wants directly —
+`EventFrameBuilder` would just be re-buffering something that's already
+batched. Full chain, one step:
+
+```
+MuJoCo camera ("side", or dual-camera's "world"/"pole")
+  │  env.render() -- true RGB pixels of the actual simulated scene
+  ▼
+EventsOnlyCartpoleWrapper._render_downscaled()
+  │  (render_h, render_w, 3) uint8 RGB -> downscaled (obs_h, obs_w, 3) uint8 RGB
+  ▼
+V2EEventGenerator.generate(frame_rgb, t)                    [rgb_to_event/v2e_events.py]
+  │  Rec.709 luma -> (obs_h, obs_w) float64 grayscale, [0,255]
+  ▼
+EventEmulator.generate_events(gray, t)                      [rgb_to_event/v2e_emulator.py]
+  │  real DVS simulation: per-pixel log-intensity thresholds,
+  │  leak/shot noise, sub-frame timestamp interpolation
+  │  -> None (no events) or (N,4) [t, x, y, polarity]
+  ▼
+V2EEventGenerator.generate() reorders columns
+  │  -> (x, y, polarity, t): four parallel 1D arrays
+  ▼
+events_to_frames(x, y, polarity, t, t_start, t_end, n_bins=5, ...)  [encoder/event_to_frame.py]
+  │  buckets the step's events into 5 positive + 5 negative
+  │  time-binned (channels, H, W) tensors
+  ▼
+EventsOnlyCartpoleWrapper concatenates pos-then-neg
+  │  -> (2*n_bins*channels, H, W) observation, handed to SB3
+  ▼
+EventEncoder.forward()                                       [encoder/encoder.py]
+  │  SpatialBranch -> TemporalBranch -> Fusion -> pooled feature vector
+  ▼
+PPO actor/critic heads -> action
+```
+
+Everything from `events_to_frames()` onward is exactly the same code path
+`fake_events.py` already fed — Manish's representation-learning side needed
+zero changes to consume the real converter's output; `event_source="v2e"`
+vs `"fake"` only changes what happens upstream of that boundary.

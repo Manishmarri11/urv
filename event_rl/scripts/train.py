@@ -9,9 +9,10 @@ STATUS: both former `# TODO(env):` markers are resolved -- build_env() now
 constructs a real, runnable environment via env/make_env.py: CartpoleWorld-v0
 (a real MuJoCo cartpole) wrapped by EventsOnlyCartpoleWrapper, which strips
 the ground-truth 4-vector observation entirely and replaces it with
-event-derived frames (currently via fake_events.rgb_to_events(), a
-placeholder frame-differencing converter -- swap that one function for the
-real RGB-to-event converter when it's ready; nothing here needs to change).
+event-derived frames, via either RGB-to-event converter --event_source
+selects (default "fake": fake_events.rgb_to_events(), a placeholder
+frame-differencing converter; "v2e": v2e_events.V2EEventGenerator, a real
+DVS camera simulation -- both under env/rgb_to_event/).
 """
 import os
 import re
@@ -89,6 +90,7 @@ def build_env(config):
         obs_width=config["obs_width"],
         n_bins=config["n_bins"],
         channels=config["channels"],
+        event_source=config["event_source"],
     )
     env = TimeLimit(env, max_episode_steps=config["max_episode_steps"])
     # Monitor must be wrapped explicitly here: SB3 only auto-adds it when you
@@ -113,14 +115,19 @@ def main():
     parser.add_argument("--wandb_project", type=str, default="event_rl", help="")
     parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
                          help="Real MuJoCo env to wrap. 'CartpoleWorld-v0' (default, single-axis, camera "
-                              "'side') or 'CartpoleWorldDualCamera-v0' (environment teammate's in-progress "
-                              "2D/cliff-path env, cameras 'world'/'pole' -- NOT runnable yet, needs "
-                              "env/assets/ texture+heightmap files that aren't in this repo yet). "
-                              "--camera_name must match whichever env_id you choose.")
+                              "'side') or 'CartpoleWorldDualCamera-v0' (environment teammate's 2D/cliff-path "
+                              "env, cameras 'world'/'pole'). --camera_name must match whichever env_id you "
+                              "choose.")
     parser.add_argument("--camera_name", type=str, default="side",
                          help="Must be valid for --env_id: 'side' for CartpoleWorld-v0; 'pole' (true "
                               "egocentric feed, intended for the event pipeline) or 'world' (3rd-person "
                               "convenience view) for CartpoleWorldDualCamera-v0.")
+    parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
+                         help="RGB-to-event converter. 'fake' (default): stateless two-frame diff placeholder "
+                              "(rgb_to_event/fake_events.py), unchanged behavior from all earlier runs. 'v2e': a real, "
+                              "stateful DVS camera simulation (env/rgb_to_event/v2e_events.py) -- real per-pixel threshold "
+                              "mismatch, leak/shot noise, and sub-frame-resolved event timestamps instead of "
+                              "randomly-assigned ones.")
     parser.add_argument("--obs_height", type=int, default=128, help="downscaled render height fed to the event pipeline")
     parser.add_argument("--obs_width", type=int, default=128, help="downscaled render width fed to the event pipeline")
     parser.add_argument("--n_bins", type=int, default=5, help="must match EventEncoder's n_bins (default 5)")
@@ -154,6 +161,7 @@ def main():
         "max_episode_steps": args.max_episode_steps,
         "env_id": args.env_id,
         "camera_name": args.camera_name,
+        "event_source": args.event_source,
         "obs_height": args.obs_height,
         "obs_width": args.obs_width,
         "n_bins": args.n_bins,

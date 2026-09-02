@@ -24,22 +24,24 @@ def make_env(
     channels: int = 3,
     event_threshold: float = 0.015,
     max_count: float = 5.0,
+    event_source: str = "fake",
     seed=None,
 ):
     """Returns a Gym env whose observation is (2*n_bins*channels, obs_height,
     obs_width) event-derived frames only -- the exact shape EventEncoder
-    expects. Backed by a fake RGB-to-event converter either way (see
-    fake_events.py); swap that for the real converter when ready.
+    expects.
 
     env_id/camera_name must be a matching pair:
       - "CartpoleWorld-v0" (default) only has camera "side" -- the original
         single-camera, single-axis environment.
-      - "CartpoleWorldDualCamera-v0" (your environment teammate's in-progress
-        2D/cliff-path environment) only has "world" (3rd-person convenience
-        view) or "pole" (the true egocentric feed they intend for the event
-        pipeline). NOT YET RUNNABLE as of this writing -- its XML references
-        texture/heightmap assets (env/assets/) that don't exist in this repo
-        yet; get them from your teammate before trying this env_id.
+      - "CartpoleWorldDualCamera-v0" (environment teammate's 2D/cliff-path
+        environment) only has "world" (3rd-person convenience view) or
+        "pole" (the true egocentric feed intended for the event pipeline).
+
+    event_source picks the RGB-to-event converter: "fake" (default,
+    stateless two-frame diff placeholder, see rgb_to_event/fake_events.py)
+    or "v2e" (a real, stateful DVS camera simulation, see
+    rgb_to_event/v2e_events.py).
     """
     return EventsOnlyCartpoleWrapper(
         env_id=env_id,
@@ -52,5 +54,6 @@ def make_env(
         channels=channels,
         event_threshold=event_threshold,
         max_count=max_count,
+        event_source=event_source,
         seed=seed,
     )
