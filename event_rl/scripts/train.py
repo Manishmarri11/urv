@@ -6,9 +6,10 @@ wandb + tensorboard logging, checkpoint saving) but with PPO instead of
 that script's SAC, and EventEncoder instead of its disabled EncoderCNN.
 
 STATUS: both former `# TODO(env):` markers are resolved -- build_env() now
-constructs a real, runnable environment via env/make_env.py: CartpoleWorld-v0
-(a real MuJoCo cartpole) wrapped by EventsOnlyCartpoleWrapper, which strips
-the ground-truth 4-vector observation entirely and replaces it with
+constructs a real, runnable environment via env/make_env.py:
+CartpoleWorldDualCamera-v0 by default (a real MuJoCo cartpole, cliff-path
+terrain, egocentric "pole" camera) wrapped by EventsOnlyCartpoleWrapper,
+which strips the ground-truth observation entirely and replaces it with
 event-derived frames, via either RGB-to-event converter --event_source
 selects (default "fake": fake_events.rgb_to_events(), a placeholder
 frame-differencing converter; "v2e": v2e_events.V2EEventGenerator, a real
@@ -113,15 +114,15 @@ def main():
     parser.add_argument("--features_dim", type=int, default=256, help="EventEncoder output vector size")
     parser.add_argument("--max_episode_steps", type=int, default=300, help="")
     parser.add_argument("--wandb_project", type=str, default="event_rl", help="")
-    parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
-                         help="Real MuJoCo env to wrap. 'CartpoleWorld-v0' (default, single-axis, camera "
-                              "'side') or 'CartpoleWorldDualCamera-v0' (environment teammate's 2D/cliff-path "
-                              "env, cameras 'world'/'pole'). --camera_name must match whichever env_id you "
-                              "choose.")
-    parser.add_argument("--camera_name", type=str, default="side",
-                         help="Must be valid for --env_id: 'side' for CartpoleWorld-v0; 'pole' (true "
-                              "egocentric feed, intended for the event pipeline) or 'world' (3rd-person "
-                              "convenience view) for CartpoleWorldDualCamera-v0.")
+    parser.add_argument("--env_id", type=str, default="CartpoleWorldDualCamera-v0",
+                         help="Real MuJoCo env to wrap. 'CartpoleWorldDualCamera-v0' (default, environment "
+                              "teammate's intended final version -- 2D/cliff-path env, cameras 'world'/'pole') "
+                              "or 'CartpoleWorld-v0' (superseded original single-axis env, camera 'side'). "
+                              "--camera_name must match whichever env_id you choose.")
+    parser.add_argument("--camera_name", type=str, default="pole",
+                         help="Must be valid for --env_id: 'pole' (default -- true egocentric feed, intended "
+                              "for the event pipeline) or 'world' (3rd-person convenience view) for "
+                              "CartpoleWorldDualCamera-v0; 'side' for CartpoleWorld-v0.")
     parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
                          help="RGB-to-event converter. 'fake' (default): stateless two-frame diff placeholder "
                               "(rgb_to_event/fake_events.py), unchanged behavior from all earlier runs. 'v2e': a real, "

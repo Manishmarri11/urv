@@ -41,13 +41,17 @@ def main():
     parser.add_argument("--checkpoint", type=str, required=True,
                          help="Full path, or a name under saved_models/, of the checkpoint to load "
                               "(same contract as train.py's --resume_model).")
-    parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
+    parser.add_argument("--env_id", type=str, default="CartpoleWorldDualCamera-v0",
                          help="Must match whatever env_id the checkpoint was actually trained with "
                               "(train.py's --env_id) -- a mismatch risks an action-space mismatch, not "
                               "just a visually wrong video.")
-    parser.add_argument("--camera_name", type=str, default="side",
+    parser.add_argument("--camera_name", type=str, default="world",
                          help="Must match --env_id and whatever camera_name the checkpoint was trained "
-                              "with (train.py's --camera_name).")
+                              "with (train.py's --camera_name). NOTE: this default ('world', for an "
+                              "easier-to-watch 3rd-person demo video) intentionally differs from train.py's "
+                              "default ('pole') -- pass --camera_name pole explicitly when evaluating a "
+                              "checkpoint trained with train.py's own default camera, or the video will "
+                              "silently show/evaluate the wrong observation distribution.")
     parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
                          help="Must match whatever event_source the checkpoint was actually trained with "
                               "(train.py's --event_source) -- a mismatch means the policy sees a "

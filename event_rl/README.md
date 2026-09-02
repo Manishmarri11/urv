@@ -230,12 +230,20 @@ experiment built to test how much this actually costs in practice.
 The Gym `Env` that turns a real MuJoCo cartpole into an events-only one.
 Wraps, never modifies, either real environment:
 
-- `"CartpoleWorld-v0"` (`env/cartpole_world_env.py`) — single camera
-  (`"side"`), 1D action space.
-- `"CartpoleWorldDualCamera-v0"` (`env/cartpole_world_env_dual_camera.py`,
-  environment teammate's work) — cameras `"world"` (3rd-person convenience
-  view) or `"pole"` (the true egocentric feed intended for the event
-  pipeline), 2D action space, cliff-path terrain.
+- `"CartpoleWorldDualCamera-v0"` (default, `env/cartpole_world_env_dual_camera.py`)
+  — the environment teammate's intended final version: cliff-path terrain,
+  2D action space, cameras `"pole"` (default — the true egocentric feed the
+  event pipeline is actually meant to consume for training) or `"world"`
+  (3rd-person convenience view — `render_checkpoint_video.py` alone
+  defaults to this one, since a demo video is easier to visually
+  sanity-check from 3rd-person; training/preflight still default to
+  `"pole"`). Matches `igbmn` (the source-of-truth dev folder for this
+  environment) byte-for-byte as of this writing — XML, env class, and
+  terrain-generation script.
+- `"CartpoleWorld-v0"` (`env/cartpole_world_env.py`) — the original,
+  single-camera (`"side"`), 1D-action environment this project started
+  with. Superseded by the dual-camera env above; kept only for anyone still
+  referencing it explicitly.
 
 `env_id`/`camera_name` must be a matching pair — passing `"side"` with the
 dual-camera env (or vice versa) fails loudly at `gym.make()`, not silently.
@@ -439,7 +447,8 @@ time-bounded batch of events in one shot, which is exactly what
 batched. Full chain, one step:
 
 ```
-MuJoCo camera ("side", or dual-camera's "world"/"pole")
+CartpoleWorldDualCamera-v0's "pole" camera (default; cliff-path terrain,
+  egocentric feed) -- or "world", or the legacy CartpoleWorld-v0's "side"
   │  env.render() -- true RGB pixels of the actual simulated scene
   ▼
 EventsOnlyCartpoleWrapper._render_downscaled()

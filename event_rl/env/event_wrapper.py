@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Events-only Gym wrapper around either real cartpole environment.
 
-Wraps (never modifies) the real cartpole_world_env.CartpoleWorldEnv or
-cartpole_world_env_dual_camera.CartpoleWorldDualCameraEnv (your environment
-teammate's second, in-progress env -- 2D tilt/cart-correction, cliff-path
-terrain, "world"/"pole" cameras instead of the original single "side" one).
+Wraps (never modifies) the real cartpole_world_env_dual_camera.
+CartpoleWorldDualCameraEnv (default -- 2D tilt/cart-correction, cliff-path
+terrain, "world"/"pole" cameras) or the original, single-camera
+cartpole_world_env.CartpoleWorldEnv ("CartpoleWorld-v0"/"side" -- superseded
+by the dual-camera env as the environment teammate's intended final version,
+kept around for anyone still referencing it explicitly).
 Renders each step and converts consecutive frames into an event stream via
 one of two interchangeable converters, both under rgb_to_event/
 (event_source=):
@@ -60,10 +62,10 @@ class EventsOnlyCartpoleWrapper(gym.Env):
 
     def __init__(
         self,
-        env_id: str = "CartpoleWorld-v0",
+        env_id: str = "CartpoleWorldDualCamera-v0",
         render_width: int = 480,
         render_height: int = 320,
-        camera_name: str = "side",
+        camera_name: str = "pole",
         obs_height: int = 128,
         obs_width: int = 128,
         n_bins: int = 5,

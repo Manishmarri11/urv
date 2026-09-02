@@ -14,12 +14,12 @@ from event_wrapper import EventsOnlyCartpoleWrapper  # noqa: E402
 
 
 def make_env(
-    env_id: str = "CartpoleWorld-v0",
+    env_id: str = "CartpoleWorldDualCamera-v0",
     obs_height: int = 128,
     obs_width: int = 128,
     render_width: int = 480,
     render_height: int = 320,
-    camera_name: str = "side",
+    camera_name: str = "pole",
     n_bins: int = 5,
     channels: int = 3,
     event_threshold: float = 0.015,
@@ -32,11 +32,13 @@ def make_env(
     expects.
 
     env_id/camera_name must be a matching pair:
-      - "CartpoleWorld-v0" (default) only has camera "side" -- the original
-        single-camera, single-axis environment.
-      - "CartpoleWorldDualCamera-v0" (environment teammate's 2D/cliff-path
-        environment) only has "world" (3rd-person convenience view) or
-        "pole" (the true egocentric feed intended for the event pipeline).
+      - "CartpoleWorldDualCamera-v0" (default) -- 2D/cliff-path environment,
+        the environment teammate's intended final version. "pole" (default)
+        is the true egocentric feed intended for the event pipeline; "world"
+        is a 3rd-person convenience view for demo renders only.
+      - "CartpoleWorld-v0" only has camera "side" -- the original
+        single-camera, single-axis environment, superseded by the above but
+        kept for anyone still referencing it explicitly.
 
     event_source picks the RGB-to-event converter: "fake" (default,
     stateless two-frame diff placeholder, see rgb_to_event/fake_events.py)

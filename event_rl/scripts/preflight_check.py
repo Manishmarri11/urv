@@ -19,13 +19,14 @@ sys.path.insert(0, os.path.join(_SCRIPT_DIR, "..", "env"))
 sys.path.insert(0, os.path.join(_SCRIPT_DIR, "..", "encoder"))
 
 _parser = argparse.ArgumentParser(description="Pre-flight checks before a real training job")
-_parser.add_argument("--env_id", type=str, default="CartpoleWorld-v0",
+_parser.add_argument("--env_id", type=str, default="CartpoleWorldDualCamera-v0",
                       help="Must match whatever env_id the real training job will use -- checking the "
                            "wrong one gives false confidence instead of actually validating what's about "
                            "to run (e.g. CartpoleWorldDualCamera-v0 needs env/assets/ present, which "
                            "checking CartpoleWorld-v0 would never catch).")
-_parser.add_argument("--camera_name", type=str, default="side",
-                      help="Must match --env_id (e.g. 'pole' or 'world' for CartpoleWorldDualCamera-v0).")
+_parser.add_argument("--camera_name", type=str, default="pole",
+                      help="Must match --env_id (e.g. 'pole' or 'world' for CartpoleWorldDualCamera-v0; "
+                           "'side' for CartpoleWorld-v0).")
 _parser.add_argument("--event_source", type=str, default="fake", choices=["fake", "v2e"],
                       help="Must match whatever event_source the real training job will use -- 'v2e' "
                            "exercises the real DVS simulation (env/rgb_to_event/v2e_events.py) instead of the fake "
