@@ -25,6 +25,9 @@ def make_env(
     event_threshold: float = 0.015,
     max_count: float = 5.0,
     event_source: str = "fake",
+    v2e_pos_thres: float = 0.2,
+    v2e_neg_thres: float = 0.2,
+    v2e_device: str = "cpu",
     seed=None,
 ):
     """Returns a Gym env whose observation is (2*n_bins*channels, obs_height,
@@ -57,5 +60,8 @@ def make_env(
         event_threshold=event_threshold,
         max_count=max_count,
         event_source=event_source,
+        v2e_pos_thres=v2e_pos_thres,
+        v2e_neg_thres=v2e_neg_thres,
+        v2e_device=v2e_device,
         seed=seed,
     )

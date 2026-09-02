@@ -92,6 +92,11 @@ def build_env(config):
         n_bins=config["n_bins"],
         channels=config["channels"],
         event_source=config["event_source"],
+        max_count=config["max_count"],
+        event_threshold=config["event_threshold"],
+        v2e_pos_thres=config["v2e_pos_thres"],
+        v2e_neg_thres=config["v2e_neg_thres"],
+        v2e_device=config["v2e_device"],
     )
     env = TimeLimit(env, max_episode_steps=config["max_episode_steps"])
     # Monitor must be wrapped explicitly here: SB3 only auto-adds it when you
@@ -129,6 +134,27 @@ def main():
                               "stateful DVS camera simulation (env/rgb_to_event/v2e_events.py) -- real per-pixel threshold "
                               "mismatch, leak/shot noise, and sub-frame-resolved event timestamps instead of "
                               "randomly-assigned ones.")
+    parser.add_argument("--max_count", type=float, default=5.0,
+                         help="event_to_frame.py normalization: the per-pixel-per-bin event count that maps to "
+                              "1.0. MEASURED CAVEAT: with the current scene/step_dt, observation values are only "
+                              "ever 0.0 or exactly 0.2 (=1/5.0) for BOTH event sources -- no pixel accumulates "
+                              "more than one event per bin, so 80%% of the [0,1] range goes unused and the "
+                              "encoder effectively sees a binary mask. Left at 5.0 by default so results stay "
+                              "comparable with every earlier run; try --max_count 1.0 to use the full range.")
+    parser.add_argument("--event_threshold", type=float, default=0.015,
+                         help="--event_source fake only: minimum grayscale change counted as an event. Higher "
+                              "= sparser. Ignored when --event_source v2e (use --v2e_pos_thres/--v2e_neg_thres).")
+    parser.add_argument("--v2e_pos_thres", type=float, default=0.2,
+                         help="--event_source v2e only: ON-event log-intensity threshold (v2e's own default). "
+                              "MEASURED: at 0.2 the v2e path yields ~0.2%% nonzero observation pixels vs ~3.4%% "
+                              "for --event_source fake -- ~17x sparser than the distribution every earlier "
+                              "successful run trained on. Lower this to densify if v2e runs fail to learn.")
+    parser.add_argument("--v2e_neg_thres", type=float, default=0.2,
+                         help="--event_source v2e only: OFF-event threshold. See --v2e_pos_thres.")
+    parser.add_argument("--v2e_device", type=str, default="cpu",
+                         help="--event_source v2e only: torch device for the DVS emulator. MEASURED: 'cpu' is "
+                              "not the bottleneck at 128x128 (v2e ~130 ms/step end to end vs ~150 ms/step for "
+                              "fake), so 'cuda' buys nothing at this resolution -- exposed for larger frames.")
     parser.add_argument("--obs_height", type=int, default=128, help="downscaled render height fed to the event pipeline")
     parser.add_argument("--obs_width", type=int, default=128, help="downscaled render width fed to the event pipeline")
     parser.add_argument("--n_bins", type=int, default=5, help="must match EventEncoder's n_bins (default 5)")
@@ -163,6 +189,11 @@ def main():
         "env_id": args.env_id,
         "camera_name": args.camera_name,
         "event_source": args.event_source,
+        "max_count": args.max_count,
+        "event_threshold": args.event_threshold,
+        "v2e_pos_thres": args.v2e_pos_thres,
+        "v2e_neg_thres": args.v2e_neg_thres,
+        "v2e_device": args.v2e_device,
         "obs_height": args.obs_height,
         "obs_width": args.obs_width,
         "n_bins": args.n_bins,

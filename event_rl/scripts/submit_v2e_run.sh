@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=event_rl_dual_camera
+#SBATCH --job-name=event_rl_v2e
 #SBATCH --mem=32000
 #SBATCH -p gpu-preempt
 #SBATCH -G 1
@@ -7,13 +7,22 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_%j.out
 
-# Dual-camera run -- same real 50,000-step training config as
-# submit_poster_run.sh (VecNormalize fix included), but against your
-# environment teammate's CartpoleWorldDualCamera-v0 (2D tilt/cart-correction,
-# cliff-path terrain) instead of the original single-camera/single-axis env.
-# camera_name=pole is the true egocentric feed your teammate intends for the
-# event pipeline (not "world", which is a 3rd-person convenience view).
-# Auto-produces poster-ready PNG plots at the end, same as submit_poster_run.sh.
+# v2e run -- identical to submit_poster_run.sh except --event_source v2e:
+# the real, stateful DVS camera simulation (per-pixel threshold mismatch,
+# leak/shot noise, sub-frame-resolved timestamps) instead of the "fake"
+# two-frame-diff placeholder every earlier successful run trained on.
+#
+# MEASURED BEFORE RUNNING THIS (see README's "Event source" section): at v2e's
+# default thresholds the observations are ~17x sparser than "fake" (~0.2% vs
+# ~3.4% nonzero pixels), with occasional fully-blank steps. That is real DVS
+# behavior, not a bug, but it IS a materially different input distribution --
+# so treat this as an experiment whose outcome is genuinely unknown, and keep
+# submit_poster_run.sh's "fake" run as the comparable baseline. If this fails
+# to learn, --v2e_pos_thres/--v2e_neg_thres below 0.2 densify the stream.
+#
+# Env/camera/converter are passed EXPLICITLY rather than relying on train.py's
+# defaults -- those defaults have changed once already, silently changing what
+# scripts like this ran without any edit to the script itself.
 
 module load python/3.13 2>/dev/null || true
 source .venv/bin/activate
@@ -23,13 +32,17 @@ export WANDB_MODE=offline
 
 ENV_ID=CartpoleWorldDualCamera-v0
 CAMERA_NAME=pole
+EVENT_SOURCE=v2e
 
 echo "=== job started on $(hostname) at $(date) ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo "nvidia-smi not available"
 
 echo ""
-echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME) ==="
-python scripts/preflight_check.py --env_id "$ENV_ID" --camera_name "$CAMERA_NAME"
+echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME, event_source=$EVENT_SOURCE) ==="
+python scripts/preflight_check.py \
+    --env_id "$ENV_ID" \
+    --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE"
 PREFLIGHT_STATUS=$?
 if [ $PREFLIGHT_STATUS -ne 0 ]; then
     echo "=== PRE-FLIGHT FAILED (exit $PREFLIGHT_STATUS) -- aborting before training. ==="
@@ -37,16 +50,17 @@ if [ $PREFLIGHT_STATUS -ne 0 ]; then
 fi
 
 echo ""
-echo "=== Training run ==="
+echo "=== Training run (real v2e DVS simulation) ==="
 TRAIN_LOG=$(mktemp)
 python scripts/train.py \
     --device cuda \
     --env_id "$ENV_ID" \
     --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE" \
     --total_timesteps 50000 \
     --checkpoint_freq 5000 \
     --max_episode_steps 300 \
-    --wandb_project event_rl_dual_camera \
+    --wandb_project event_rl_v2e \
     2>&1 | tee "$TRAIN_LOG"
 TRAIN_STATUS=${PIPESTATUS[0]}
 
@@ -69,8 +83,8 @@ else
     echo "=== Plotting: $EXPERIMENT_NAME ==="
     python scripts/plot_training_curves.py \
         --runs "event_rl_tensorboard/${EXPERIMENT_NAME}/PPO_1" \
-        --labels "STNet + PPO (dual-camera)" \
-        --out_dir poster_plots_dual_camera
+        --labels "STNet + PPO (v2e)" \
+        --out_dir poster_plots_v2e
 fi
 
 echo "=== job finished at $(date) ==="

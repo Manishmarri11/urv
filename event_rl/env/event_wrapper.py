@@ -73,6 +73,9 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         event_threshold: float = 0.015,
         max_count: float = 5.0,
         event_source: str = "fake",
+        v2e_pos_thres: float = 0.2,
+        v2e_neg_thres: float = 0.2,
+        v2e_device: str = "cpu",
         seed: Optional[int] = None,
     ):
         super().__init__()
@@ -120,7 +123,23 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         self._v2e_gen = None  # event_source="v2e" only
         self._sim_time = 0.0  # running clock EventEmulator needs -- event_source="v2e" only
         if self.event_source == "v2e":
-            self._v2e_gen = V2EEventGenerator(seed=seed if seed is not None else 0)
+            # Thresholds are the main knob controlling event density -- measured
+            # on this project's own scene, v2e's defaults (0.2/0.2) yield ~0.2%
+            # nonzero observation pixels vs ~3.4% for event_source="fake", so
+            # they are worth sweeping rather than leaving hardcoded and
+            # unreachable from make_env()/train.py.
+            # v2e_device stays "cpu" by default: measured on a 128x128 frame the
+            # emulator is NOT the bottleneck (v2e is ~130 ms/step end to end vs
+            # ~150 ms/step for "fake", which generates far more events for
+            # events_to_frames() to bucket), so "cuda" buys nothing here -- but
+            # it is exposed rather than hardcoded so a larger obs_height/width
+            # can move it without editing library code.
+            self._v2e_gen = V2EEventGenerator(
+                device=v2e_device,
+                pos_thres=v2e_pos_thres,
+                neg_thres=v2e_neg_thres,
+                seed=seed if seed is not None else 0,
+            )
 
     def _render_downscaled(self) -> np.ndarray:
         frame = self._cartpole.render()  # (render_height, render_width, 3) uint8

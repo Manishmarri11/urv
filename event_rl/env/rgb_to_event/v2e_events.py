@@ -76,9 +76,22 @@ class V2EEventGenerator:
     ):
         # Defaults mirror v2e's own EventEmulator defaults, except
         # shot_noise_rate_hz=0.0 (v2e's default too) and device="cpu" (v2e
-        # defaults to "cuda" since it assumes a GPU workstation; this
-        # project needs to run on a CPU-only laptop too -- pass
-        # device="cuda" explicitly on the GPU cluster).
+        # defaults to "cuda" since it assumes a GPU workstation; this project
+        # needs to run on a CPU-only laptop too).
+        #
+        # MEASURED, at this project's 128x128 obs size: "cpu" is NOT the
+        # bottleneck and "cuda" buys nothing -- the v2e path runs ~130 ms/step
+        # end to end vs ~150 ms/step for fake_events.rgb_to_events(), because
+        # fake generates ~17x more events for events_to_frames() to bucket.
+        # Every caller in this project therefore leaves device="cpu"; it stays
+        # a parameter (threaded through make_env()/EventsOnlyCartpoleWrapper as
+        # v2e_device) so a larger frame size can change that without editing
+        # this file.
+        #
+        # pos_thres/neg_thres are the main event-density knob: at v2e's default
+        # 0.2 this scene yields ~0.2% nonzero observation pixels vs ~3.4% for
+        # the fake converter. Lower them to densify. Also threaded through
+        # make_env()/train.py (--v2e_pos_thres/--v2e_neg_thres).
         self._kwargs = dict(
             device=device, pos_thres=pos_thres, neg_thres=neg_thres,
             sigma_thres=sigma_thres, cutoff_hz=cutoff_hz,

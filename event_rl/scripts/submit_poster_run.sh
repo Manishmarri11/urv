@@ -7,11 +7,20 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm_%j.out
 
-# Poster run -- real 50,000-step training (same config as submit_stnet_long_run.sh,
-# including the VecNormalize fix) that automatically produces poster-ready PNG
-# plots at the end, so there's no separate manual plotting step afterward.
-# Pull slurm_<jobid>.out's "Experiment name: ..." line if you need to
-# re-plot or find this run's checkpoints later.
+# Poster run -- real 50,000-step training (VecNormalize fix included) that
+# automatically produces poster-ready PNG plots at the end, so there's no
+# separate manual plotting step afterward. Pull slurm_<jobid>.out's
+# "Experiment name: ..." line if you need to re-plot or find this run's
+# checkpoints later.
+#
+# This is the "fake"-converter baseline: same event distribution every earlier
+# successful run trained on, so results stay comparable. See submit_v2e_run.sh
+# for the same run against the real DVS simulation.
+#
+# Every env/camera/converter choice below is passed EXPLICITLY rather than
+# relying on train.py's defaults -- those defaults have changed once already
+# (single-camera "side" -> dual-camera "pole"), which silently changed what
+# this script ran without any edit to the script itself.
 
 module load python/3.13 2>/dev/null || true
 source .venv/bin/activate
@@ -19,12 +28,19 @@ source .venv/bin/activate
 export MUJOCO_GL=egl
 export WANDB_MODE=offline
 
+ENV_ID=CartpoleWorldDualCamera-v0
+CAMERA_NAME=pole
+EVENT_SOURCE=fake
+
 echo "=== job started on $(hostname) at $(date) ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo "nvidia-smi not available"
 
 echo ""
-echo "=== pre-flight check ==="
-python scripts/preflight_check.py
+echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME, event_source=$EVENT_SOURCE) ==="
+python scripts/preflight_check.py \
+    --env_id "$ENV_ID" \
+    --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE"
 PREFLIGHT_STATUS=$?
 if [ $PREFLIGHT_STATUS -ne 0 ]; then
     echo "=== PRE-FLIGHT FAILED (exit $PREFLIGHT_STATUS) -- aborting before training. ==="
@@ -36,6 +52,9 @@ echo "=== Training run ==="
 TRAIN_LOG=$(mktemp)
 python scripts/train.py \
     --device cuda \
+    --env_id "$ENV_ID" \
+    --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE" \
     --total_timesteps 50000 \
     --checkpoint_freq 5000 \
     --max_episode_steps 300 \

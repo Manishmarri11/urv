@@ -21,12 +21,24 @@ source .venv/bin/activate
 export MUJOCO_GL=egl
 export WANDB_MODE=offline
 
+# Env/camera/converter are passed EXPLICITLY below rather than relying on
+# train.py's defaults -- those defaults have changed once already
+# (single-camera "side" -> dual-camera "pole"), which silently changed what
+# this script ran without any edit to the script itself. Test A and Test D
+# must agree on all three for the comparison to be apples-to-apples.
+ENV_ID=CartpoleWorldDualCamera-v0
+CAMERA_NAME=pole
+EVENT_SOURCE=fake
+
 echo "=== job started on $(hostname) at $(date) ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo "nvidia-smi not available"
 
 echo ""
-echo "=== pre-flight check ==="
-python scripts/preflight_check.py
+echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME, event_source=$EVENT_SOURCE) ==="
+python scripts/preflight_check.py \
+    --env_id "$ENV_ID" \
+    --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE"
 PREFLIGHT_STATUS=$?
 if [ $PREFLIGHT_STATUS -ne 0 ]; then
     echo "=== PRE-FLIGHT FAILED (exit $PREFLIGHT_STATUS) -- aborting before training. ==="
@@ -37,6 +49,9 @@ echo ""
 echo "=== Test D: recurrence-ablation training run (--stateless_temporal) ==="
 python scripts/train.py \
     --device cuda \
+    --env_id "$ENV_ID" \
+    --camera_name "$CAMERA_NAME" \
+    --event_source "$EVENT_SOURCE" \
     --total_timesteps 50000 \
     --checkpoint_freq 5000 \
     --max_episode_steps 300 \

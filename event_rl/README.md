@@ -165,6 +165,45 @@ window that spans the reset.
 - **`t_end - t_start` (the Δt window)** — too short and you get incomplete/
   sparse frames; too long and fast motion blurs together across bins.
 
+### Measured event density on this project's own scene
+
+Numbers below are from the dual-camera env, `pole` camera, 128×128
+observations, `step_dt` 0.04 s, averaged over 15 steps. All four knobs are
+reachable from `train.py`'s CLI — `--max_count`, `--event_threshold`
+(fake only), `--v2e_pos_thres` / `--v2e_neg_thres` (v2e only).
+
+| setting | nonzero obs pixels | obs max |
+|---|---|---|
+| `fake`, defaults (`event_threshold=0.015`, `max_count=5.0`) | 2.7% | 0.200 |
+| `fake`, `event_threshold=0.005` | 4.6% | 0.200 |
+| `fake`, `max_count=1.0` | 2.3% | 1.000 |
+| `v2e`, defaults (`pos/neg_thres=0.2`) | **0.13%** | 0.200 |
+| `v2e`, `pos/neg_thres=0.05` | **2.2%** | 1.000 |
+
+Two things worth knowing before choosing settings:
+
+1. **`v2e` at its own defaults is ~17x sparser than `fake`** — and `fake` is
+   the distribution every earlier successful run (ep_len 26–36) trained on.
+   That sparsity is realistic DVS behavior, not a bug, but it is a materially
+   different input distribution. `--v2e_pos_thres 0.05 --v2e_neg_thres 0.05`
+   brings it to ~2.2%, essentially matching `fake`, if a v2e run fails to
+   learn at the defaults. `v2e` also produces fully-blank observations for
+   roughly the first ~5 steps of each episode (the emulator initializing its
+   per-pixel photoreceptor state) plus occasional isolated blanks later.
+
+2. **`max_count=5.0` leaves 80% of the value range unused.** At that default,
+   observation values are only ever `0.0` or exactly `0.2` (= 1/5) for *both*
+   event sources — no pixel accumulates more than one event per bin, so the
+   encoder effectively sees a binary mask rather than graded intensity.
+   `--max_count 1.0` uses the full `[0,1]` range. The default is left at 5.0
+   so results stay comparable with every earlier run; treat changing it as an
+   experiment, not a free fix.
+
+`v2e` is **not** slower despite the extra simulation: measured ~130 ms/step
+end to end vs ~150 ms/step for `fake`, because `fake` generates far more
+events for `events_to_frames()` to bucket. `--v2e_device` stays `cpu`
+accordingly; `cuda` buys nothing at 128×128.
+
 ### If the event source gives you dense frames instead of sparse tuples
 
 If the RGB-to-event teammate's code ends up handing you dense per-pixel
