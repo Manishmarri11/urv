@@ -26,6 +26,18 @@ METRICS = [
     ("train/explained_variance", "Explained Variance", "Value Function Explained Variance"),
     ("train/value_loss", "Value Loss", "Value Loss over Training"),
     ("train/entropy_loss", "Entropy Loss", "Policy Entropy over Training"),
+    # Pole tilt: ground-truth state the agent cannot see, logged by
+    # callbacks.PoleAngleStatsCallback as an independent check on whether the
+    # policy actually balances (reward/episode-length cannot distinguish
+    # "held near-vertical" from "wobbled at the termination threshold").
+    # Episodes terminate past 0.2 rad ~= 11.46 deg on either hinge.
+    ("angle/tilt_abs_deg_mean", "Tilt from upright (deg)", "Mean Pole Tilt over Training"),
+    ("angle/tilt_abs_deg_std", "Tilt std (deg)", "Pole Tilt Variability over Training"),
+    ("angle/tilt_abs_deg_median", "Tilt median (deg)", "Median Pole Tilt over Training"),
+    ("angle/tilt_abs_deg_p95", "Tilt 95th pct (deg)", "95th-Percentile Pole Tilt over Training"),
+    ("angle/tilt_abs_deg_max", "Tilt max (deg)", "Max Pole Tilt over Training"),
+    ("angle/tilt_abs_deg_skew", "Skew", "Pole Tilt Skewness over Training"),
+    ("angle/tilt_abs_deg_kurtosis", "Excess kurtosis", "Pole Tilt Kurtosis over Training"),
 ]
 
 

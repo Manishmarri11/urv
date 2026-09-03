@@ -57,6 +57,17 @@ from v2e_events import V2EEventGenerator  # noqa: E402
 from event_to_frame import events_to_frames  # noqa: E402  (real module, read-only import)
 
 
+# Which indices of the REAL env's ground-truth observation hold the pole tilt
+# angle(s), per env_id. DIAGNOSTICS ONLY -- see _with_pole_tilt() below for
+# why surfacing these does not break the events-only constraint.
+_POLE_ANGLE_INDICES = {
+    # [cart_pos, pole_angle, cart_vel, pole_angvel]
+    "CartpoleWorld-v0": (1,),
+    # [cart_x, cart_y, pole_angle_x, pole_angle_y, cart_vx, cart_vy, ...]
+    "CartpoleWorldDualCamera-v0": (2, 3),
+}
+
+
 class EventsOnlyCartpoleWrapper(gym.Env):
     metadata = {"render_modes": ["rgb_array"]}
 
@@ -89,6 +100,7 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         # pipeline -- see their own comment in render_cartpole_world.py).
         # Passing "side" with the dual-camera env (or vice versa) fails at
         # gym.make() with an unknown-camera error, not a silent misconfig.
+        self._env_id = env_id  # used by _with_pole_tilt() to locate the tilt indices
         self._cartpole = gym.make(
             env_id,
             render_mode="rgb_array",
@@ -140,6 +152,38 @@ class EventsOnlyCartpoleWrapper(gym.Env):
                 neg_thres=v2e_neg_thres,
                 seed=seed if seed is not None else 0,
             )
+
+    def _with_pole_tilt(self, info: dict, real_obs) -> dict:
+        """Adds ground-truth pole-tilt diagnostics to `info`.
+
+        DOES NOT BREAK THE EVENTS-ONLY CONSTRAINT: these land in `info`, the
+        Gym channel for diagnostic metadata, never in the observation. SB3
+        feeds only `obs` to the policy/value networks -- `info` is read solely
+        for logging (Monitor already uses it for episode reward/length), so
+        the agent still cannot see the true pole angle. This exists precisely
+        BECAUSE the agent can't see it: it's an independent measure of whether
+        the policy is actually balancing, not just surviving.
+
+        Angles are reported in DEGREES (the callback/plot labels say so
+        explicitly) -- the underlying env works in radians, where the
+        termination threshold is 0.2 rad on either axis, i.e. ~11.46 deg.
+
+        For the 2-axis env, "tilt from upright" combines both hinges as
+        sqrt(angle_x^2 + angle_y^2). That is a small-angle approximation of
+        the true angle between the pole and vertical, which is accurate to
+        well under a tenth of a degree over this env's entire live range
+        (episodes terminate past 0.2 rad on either axis).
+        """
+        indices = _POLE_ANGLE_INDICES.get(self._env_id)
+        if indices is None:
+            return info  # unknown env layout -- skip diagnostics rather than guess
+        angles_rad = np.asarray([float(real_obs[i]) for i in indices], dtype=np.float64)
+        angles_deg = np.degrees(angles_rad)
+        info = dict(info)
+        info["pole_tilt_abs_deg"] = float(np.sqrt(np.sum(angles_deg ** 2)))
+        for axis_name, value in zip(("x", "y"), angles_deg):
+            info[f"pole_angle_{axis_name}_deg"] = float(value)
+        return info
 
     def _render_downscaled(self) -> np.ndarray:
         frame = self._cartpole.render()  # (render_height, render_width, 3) uint8
@@ -205,7 +249,7 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         else:
             obs = self._events_to_obs_fake(self._prev_frame_small, curr_small)
             self._prev_frame_small = curr_small
-        return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, self._with_pole_tilt(info, _real_obs)
 
     def render(self):
         return self._cartpole.render()
