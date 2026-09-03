@@ -31,6 +31,21 @@ _parser.add_argument("--event_source", type=str, default="fake", choices=["fake"
                       help="Must match whatever event_source the real training job will use -- 'v2e' "
                            "exercises the real DVS simulation (env/rgb_to_event/v2e_events.py) instead of the fake "
                            "placeholder, so a training-job-shaped preflight run should pass this.")
+_parser.add_argument("--max_count", type=float, default=5.0, help="Must match train.py's --max_count.")
+_parser.add_argument("--event_threshold", type=float, default=0.015,
+                      help="--event_source fake only. Must match train.py's --event_threshold.")
+_parser.add_argument("--v2e_pos_thres", type=float, default=0.2,
+                      help="--event_source v2e only. Must match train.py's --v2e_pos_thres.")
+_parser.add_argument("--v2e_neg_thres", type=float, default=0.2,
+                      help="--event_source v2e only. Must match train.py's --v2e_neg_thres.")
+_parser.add_argument("--v2e_device", type=str, default="cpu",
+                      help="--event_source v2e only. Must match train.py's --v2e_device.")
+_parser.add_argument("--reward_shaping", type=str, default="none", choices=["none", "event_stillness"],
+                      help="Must match whatever reward_shaping the real training job will use -- exercises the "
+                           "shaped-reward code path in EventsOnlyCartpoleWrapper.step() as part of check 3 below, "
+                           "so a training-job-shaped preflight run actually validates it before a real run does.")
+_parser.add_argument("--event_shaping_coef", type=float, default=2.0,
+                      help="--reward_shaping event_stillness only. Must match train.py's --event_shaping_coef.")
 _args = _parser.parse_args()
 
 failures = []
@@ -136,7 +151,11 @@ def _full_pipeline():
     from stable_baselines3 import PPO
 
     env = make_env(env_id=_args.env_id, camera_name=_args.camera_name, obs_height=128, obs_width=128,
-                    event_source=_args.event_source)
+                    event_source=_args.event_source,
+                    max_count=_args.max_count, event_threshold=_args.event_threshold,
+                    v2e_pos_thres=_args.v2e_pos_thres, v2e_neg_thres=_args.v2e_neg_thres,
+                    v2e_device=_args.v2e_device,
+                    reward_shaping=_args.reward_shaping, event_shaping_coef=_args.event_shaping_coef)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = PPO(
         "CnnPolicy", env,

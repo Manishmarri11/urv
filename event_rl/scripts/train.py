@@ -97,6 +97,8 @@ def build_env(config):
         v2e_pos_thres=config["v2e_pos_thres"],
         v2e_neg_thres=config["v2e_neg_thres"],
         v2e_device=config["v2e_device"],
+        reward_shaping=config["reward_shaping"],
+        event_shaping_coef=config["event_shaping_coef"],
     )
     env = TimeLimit(env, max_episode_steps=config["max_episode_steps"])
     # Monitor must be wrapped explicitly here: SB3 only auto-adds it when you
@@ -155,6 +157,20 @@ def main():
                          help="--event_source v2e only: torch device for the DVS emulator. MEASURED: 'cpu' is "
                               "not the bottleneck at 128x128 (v2e ~130 ms/step end to end vs ~150 ms/step for "
                               "fake), so 'cuda' buys nothing at this resolution -- exposed for larger frames.")
+    parser.add_argument("--reward_shaping", type=str, default="none", choices=["none", "event_stillness"],
+                         help="'none' (default, unchanged behavior from every earlier run): reward is exactly "
+                              "the real env's ground-truth +1 survival reward. 'event_stillness': ADDS an "
+                              "event-derived motion penalty on top of that (termination stays ground-truth "
+                              "either way -- see event_wrapper.py's module docstring for why). See "
+                              "--event_shaping_coef for the calibration this depends on.")
+    parser.add_argument("--event_shaping_coef", type=float, default=2.0,
+                         help="--reward_shaping event_stillness only: scales the per-step motion penalty "
+                              "(-coef * obs.mean()). MEASURED/CALIBRATED specifically against --v2e_pos_thres "
+                              "0.05 --v2e_neg_thres 0.05 (typical obs.mean()~0.012 there -> shaping ~2-4%% of "
+                              "the +1 survival reward). At v2e's OWN default thresholds (0.2/0.2, ~17x sparser) "
+                              "this same coefficient is a near no-op -- pass --v2e_pos_thres 0.05 "
+                              "--v2e_neg_thres 0.05 alongside this, or re-derive the coefficient, don't assume "
+                              "it transfers.")
     parser.add_argument("--obs_height", type=int, default=128, help="downscaled render height fed to the event pipeline")
     parser.add_argument("--obs_width", type=int, default=128, help="downscaled render width fed to the event pipeline")
     parser.add_argument("--n_bins", type=int, default=5, help="must match EventEncoder's n_bins (default 5)")
@@ -194,6 +210,8 @@ def main():
         "v2e_pos_thres": args.v2e_pos_thres,
         "v2e_neg_thres": args.v2e_neg_thres,
         "v2e_device": args.v2e_device,
+        "reward_shaping": args.reward_shaping,
+        "event_shaping_coef": args.event_shaping_coef,
         "obs_height": args.obs_height,
         "obs_width": args.obs_width,
         "n_bins": args.n_bins,

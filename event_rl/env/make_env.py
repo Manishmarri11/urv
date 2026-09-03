@@ -28,6 +28,8 @@ def make_env(
     v2e_pos_thres: float = 0.2,
     v2e_neg_thres: float = 0.2,
     v2e_device: str = "cpu",
+    reward_shaping: str = "none",
+    event_shaping_coef: float = 2.0,
     seed=None,
 ):
     """Returns a Gym env whose observation is (2*n_bins*channels, obs_height,
@@ -47,6 +49,14 @@ def make_env(
     stateless two-frame diff placeholder, see rgb_to_event/fake_events.py)
     or "v2e" (a real, stateful DVS camera simulation, see
     rgb_to_event/v2e_events.py).
+
+    reward_shaping="event_stillness" (default "none") adds an event-derived
+    motion penalty on top of the real env's ground-truth survival reward --
+    see EventsOnlyCartpoleWrapper.step()/event_shaping_coef's docstring
+    comments in event_wrapper.py for the exact formula and calibration.
+    event_shaping_coef is calibrated against --v2e_pos_thres 0.05
+    --v2e_neg_thres 0.05, NOT v2e's own sparser defaults -- pass both
+    together, or re-derive the coefficient for whatever thresholds you use.
     """
     return EventsOnlyCartpoleWrapper(
         env_id=env_id,
@@ -63,5 +73,7 @@ def make_env(
         v2e_pos_thres=v2e_pos_thres,
         v2e_neg_thres=v2e_neg_thres,
         v2e_device=v2e_device,
+        reward_shaping=reward_shaping,
+        event_shaping_coef=event_shaping_coef,
         seed=seed,
     )

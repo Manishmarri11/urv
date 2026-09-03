@@ -56,6 +56,27 @@ def main():
                          help="Must match whatever event_source the checkpoint was actually trained with "
                               "(train.py's --event_source) -- a mismatch means the policy sees a "
                               "meaningfully different observation distribution than it was trained on.")
+    parser.add_argument("--max_count", type=float, default=5.0,
+                         help="Must match train.py's --max_count used for this checkpoint. See train.py's help "
+                              "for the measured caveat on what this value actually does to the observation.")
+    parser.add_argument("--event_threshold", type=float, default=0.015,
+                         help="--event_source fake only. Must match train.py's --event_threshold.")
+    parser.add_argument("--v2e_pos_thres", type=float, default=0.2,
+                         help="--event_source v2e only. Must match train.py's --v2e_pos_thres -- v2e's own "
+                              "default (0.2) is ~17x sparser than what --reward_shaping event_stillness's "
+                              "default coefficient was calibrated against (0.05); a mismatch here silently "
+                              "evaluates the policy on a different observation distribution than it trained on.")
+    parser.add_argument("--v2e_neg_thres", type=float, default=0.2,
+                         help="--event_source v2e only. Must match train.py's --v2e_neg_thres. See --v2e_pos_thres.")
+    parser.add_argument("--v2e_device", type=str, default="cpu",
+                         help="--event_source v2e only. Must match train.py's --v2e_device.")
+    parser.add_argument("--reward_shaping", type=str, default="none", choices=["none", "event_stillness"],
+                         help="Must match whatever reward_shaping the checkpoint was actually trained with "
+                              "(train.py's --reward_shaping) -- this only affects the printed reward summary "
+                              "below, not the policy's behavior, but a mismatch makes that summary meaningless "
+                              "as a comparison against the training curves.")
+    parser.add_argument("--event_shaping_coef", type=float, default=2.0,
+                         help="--reward_shaping event_stillness only. Must match train.py's --event_shaping_coef.")
     parser.add_argument("--n_episodes", type=int, default=10, help="")
     parser.add_argument("--max_episode_steps", type=int, default=300,
                          help="must match the value used during training")
@@ -80,7 +101,11 @@ def main():
     env = make_env(env_id=args.env_id, camera_name=args.camera_name,
                     obs_height=args.obs_height, obs_width=args.obs_width,
                     n_bins=args.n_bins, channels=args.channels,
-                    event_source=args.event_source)
+                    event_source=args.event_source,
+                    max_count=args.max_count, event_threshold=args.event_threshold,
+                    v2e_pos_thres=args.v2e_pos_thres, v2e_neg_thres=args.v2e_neg_thres,
+                    v2e_device=args.v2e_device,
+                    reward_shaping=args.reward_shaping, event_shaping_coef=args.event_shaping_coef)
     env = TimeLimit(env, max_episode_steps=args.max_episode_steps)
 
     # No env= passed to load() -- inference-only (.predict()), never .learn()
@@ -97,6 +122,7 @@ def main():
         model.policy.features_extractor.reset()  # episode-boundary reset, matches TemporalResetCallback
         frames = [env.render()]
         total_reward = 0.0
+        total_shaping = 0.0  # only meaningful when --reward_shaping event_stillness
         steps = 0
         terminated = truncated = False
         while not (terminated or truncated):
@@ -106,23 +132,29 @@ def main():
             obs, reward, terminated, truncated, info = env.step(action)
             frames.append(env.render())
             total_reward += float(reward)
+            total_shaping += info.get("reward_shaping", 0.0)
             steps += 1
             if args.stateless_temporal:
                 model.policy.features_extractor.reset()  # matches StatelessTemporalCallback's every-step reset
 
         video_path = os.path.join(out_dir, f"episode_{ep:02d}.mp4")
         imageio.mimsave(video_path, frames, fps=args.fps)
-        episode_summaries.append((steps, total_reward))
-        print(f"  episode {ep:2d}: {steps:4d} steps, reward={total_reward:7.2f} -> {video_path}")
+        episode_summaries.append((steps, total_reward, total_shaping))
+        shaping_note = f", shaping_sum={total_shaping:7.3f}" if args.reward_shaping != "none" else ""
+        print(f"  episode {ep:2d}: {steps:4d} steps, reward={total_reward:7.2f}{shaping_note} -> {video_path}")
 
     env.close()
 
-    ep_lens = [s for s, _ in episode_summaries]
-    ep_rews = [r for _, r in episode_summaries]
+    ep_lens = [s for s, _, _ in episode_summaries]
+    ep_rews = [r for _, r, _ in episode_summaries]
     print()
     print(f"Summary over {args.n_episodes} episodes:")
     print(f"  ep_len_mean = {sum(ep_lens) / len(ep_lens):.2f}")
     print(f"  ep_rew_mean = {sum(ep_rews) / len(ep_rews):.2f}")
+    if args.reward_shaping != "none":
+        ep_shaping = [sh for _, _, sh in episode_summaries]
+        print(f"  shaping_sum_mean = {sum(ep_shaping) / len(ep_shaping):.3f}  "
+              f"(negative = motion penalized; compare against ep_rew_mean's +1/step ceiling)")
 
 
 if __name__ == "__main__":

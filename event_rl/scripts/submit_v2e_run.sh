@@ -10,19 +10,28 @@
 # v2e run -- identical to submit_poster_run.sh except --event_source v2e:
 # the real, stateful DVS camera simulation (per-pixel threshold mismatch,
 # leak/shot noise, sub-frame-resolved timestamps) instead of the "fake"
-# two-frame-diff placeholder every earlier successful run trained on.
+# two-frame-diff placeholder every earlier successful run trained on. fake
+# is deliberately not used anywhere below -- v2e is the only converter this
+# project uses going forward, not a baseline to compare against.
 #
-# MEASURED BEFORE RUNNING THIS (see README's "Event source" section): at v2e's
-# default thresholds the observations are ~17x sparser than "fake" (~0.2% vs
-# ~3.4% nonzero pixels), with occasional fully-blank steps. That is real DVS
-# behavior, not a bug, but it IS a materially different input distribution --
-# so treat this as an experiment whose outcome is genuinely unknown, and keep
-# submit_poster_run.sh's "fake" run as the comparable baseline. If this fails
-# to learn, --v2e_pos_thres/--v2e_neg_thres below 0.2 densify the stream.
+# MEASURED BEFORE RUNNING THIS (see README's "Measured event density"
+# section): at v2e's OWN default thresholds (0.2/0.2) the observations are
+# ~17x sparser than "fake" was (~0.2% vs ~3.4% nonzero pixels), with
+# occasional fully-blank steps -- likely too sparse for this architecture to
+# learn from in a reasonable budget. --v2e_pos_thres/--v2e_neg_thres 0.05
+# below is a deliberate choice to densify BEFORE running, not a
+# troubleshooting step to try after a failed run.
 #
-# Env/camera/converter are passed EXPLICITLY rather than relying on train.py's
-# defaults -- those defaults have changed once already, silently changing what
-# scripts like this ran without any edit to the script itself.
+# --reward_shaping event_stillness adds an event-derived motion penalty on
+# top of the real env's ground-truth survival reward (termination stays
+# ground-truth either way -- see README's "Reward shaping" section).
+# --event_shaping_coef 2.0 is calibrated specifically against
+# --v2e_pos_thres/--v2e_neg_thres 0.05 -- if either changes, re-derive it,
+# don't assume it transfers.
+#
+# Env/camera/converter/shaping are passed EXPLICITLY rather than relying on
+# train.py's defaults -- those defaults have changed once already, silently
+# changing what scripts like this ran without any edit to the script itself.
 
 module load python/3.13 2>/dev/null || true
 source .venv/bin/activate
@@ -33,16 +42,24 @@ export WANDB_MODE=offline
 ENV_ID=CartpoleWorldDualCamera-v0
 CAMERA_NAME=pole
 EVENT_SOURCE=v2e
+V2E_POS_THRES=0.05
+V2E_NEG_THRES=0.05
+REWARD_SHAPING=event_stillness
+EVENT_SHAPING_COEF=2.0
 
 echo "=== job started on $(hostname) at $(date) ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || echo "nvidia-smi not available"
 
 echo ""
-echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME, event_source=$EVENT_SOURCE) ==="
+echo "=== pre-flight check (env_id=$ENV_ID, camera_name=$CAMERA_NAME, event_source=$EVENT_SOURCE, v2e_pos/neg_thres=$V2E_POS_THRES/$V2E_NEG_THRES, reward_shaping=$REWARD_SHAPING) ==="
 python scripts/preflight_check.py \
     --env_id "$ENV_ID" \
     --camera_name "$CAMERA_NAME" \
-    --event_source "$EVENT_SOURCE"
+    --event_source "$EVENT_SOURCE" \
+    --v2e_pos_thres "$V2E_POS_THRES" \
+    --v2e_neg_thres "$V2E_NEG_THRES" \
+    --reward_shaping "$REWARD_SHAPING" \
+    --event_shaping_coef "$EVENT_SHAPING_COEF"
 PREFLIGHT_STATUS=$?
 if [ $PREFLIGHT_STATUS -ne 0 ]; then
     echo "=== PRE-FLIGHT FAILED (exit $PREFLIGHT_STATUS) -- aborting before training. ==="
@@ -50,13 +67,17 @@ if [ $PREFLIGHT_STATUS -ne 0 ]; then
 fi
 
 echo ""
-echo "=== Training run (real v2e DVS simulation) ==="
+echo "=== Training run (real v2e DVS simulation, event_stillness reward shaping) ==="
 TRAIN_LOG=$(mktemp)
 python scripts/train.py \
     --device cuda \
     --env_id "$ENV_ID" \
     --camera_name "$CAMERA_NAME" \
     --event_source "$EVENT_SOURCE" \
+    --v2e_pos_thres "$V2E_POS_THRES" \
+    --v2e_neg_thres "$V2E_NEG_THRES" \
+    --reward_shaping "$REWARD_SHAPING" \
+    --event_shaping_coef "$EVENT_SHAPING_COEF" \
     --total_timesteps 50000 \
     --checkpoint_freq 5000 \
     --max_episode_steps 300 \

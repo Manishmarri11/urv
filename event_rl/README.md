@@ -16,18 +16,23 @@ visually-evaluable policy. One full step, traced start to finish:
 
 ```
 env/event_wrapper.py (EventsOnlyCartpoleWrapper.step)
-  │  steps the real MuJoCo cartpole, renders the new frame
-  │  converts it to events via one of two interchangeable sources
-  │  (event_source=): "fake" (fake_events.rgb_to_events(), a placeholder
-  │  two-frame diff) or "v2e" (v2e_events.V2EEventGenerator, a real DVS
-  │  camera simulation -- see the env/rgb_to_event/v2e_events.py section below)
+  │  steps the real MuJoCo cartpole (reward=ground-truth +1 survival,
+  │  terminated=ground-truth pole angle -- always, even under shaping below),
+  │  renders the new frame, converts it to events via one of two
+  │  interchangeable sources (event_source=): "fake" (fake_events.rgb_to_events(),
+  │  a placeholder two-frame diff) or "v2e" (v2e_events.V2EEventGenerator, a
+  │  real DVS camera simulation -- see the env/rgb_to_event/v2e_events.py
+  │  section below)
   ▼
 encoder/event_to_frame.py (events_to_frames)
   │  buckets the raw (x,y,polarity,t) events into 5 positive + 5 negative
   │  time-binned tensors, each (channels, H, W)
   ▼
   (event_wrapper.py concatenates pos-then-neg into one (2*n_bins*channels,H,W)
-   observation array -- this is what SB3 hands to the policy)
+   observation array -- this is what SB3 hands to the policy; with
+   reward_shaping="event_stillness" it also feeds obs.mean() back into
+   reward as a motion penalty, added to -- not replacing -- the ground-truth
+   reward above; see "Reward shaping" in the event_wrapper.py section)
   ▼
 encoder/encoder.py (EventEncoder.forward)
   │  splits the observation back into the 10 frames
@@ -294,9 +299,13 @@ enforced), renders the new frame, converts it to events via whichever
 `event_source` was requested (`"fake"` or `"v2e"` — see the two branch
 methods below and the `v2e_events.py` section), converts that into frames via
 `event_to_frame.events_to_frames()`, and returns the concatenated
-`(2*n_bins*channels, H, W)` result as the observation. Reward/terminated/
-truncated pass straight through from the real env, untouched — the events-only
-constraint applies only to the observation.
+`(2*n_bins*channels, H, W)` result as the observation. `terminated`/
+`truncated` pass straight through from the real env, always unshaped — the
+events-only constraint applies only to the observation, and termination
+specifically stays ground-truth even under reward shaping (see below).
+`reward` passes through unshaped by default (`reward_shaping="none"`), or
+gets an event-derived term added on top when shaping is enabled — see
+"Reward shaping" right after this section.
 
 `action_space` is copied verbatim from whichever real env was requested, so
 it adapts automatically to 1D or 2D actions with no code change needed.
@@ -317,6 +326,77 @@ conventions:
 Both branches share `_frames_from_events()` for the last step (bucket
 `(x,y,polarity,t)` into `event_to_frame.events_to_frames()`), so the two
 converters are genuinely interchangeable from that point on.
+
+### Reward shaping (`reward_shaping`, `event_shaping_coef`)
+
+`CartpoleWorldDualCameraEnv.step()` (and the original `CartpoleWorldEnv`)
+compute a ground-truth `reward = float(not terminated)` from the real
+pole-angle state — see cartpole_world_env_dual_camera.py:66's standing
+comment noting this was always meant to eventually incorporate real event
+data. `reward_shaping` is that: default `"none"` passes that ground-truth
+reward straight through, unchanged from every earlier run.
+`reward_shaping="event_stillness"` ADDS an event-derived motion penalty on
+top of it — not instead of it.
+
+This lives here, in the wrapper, not in `cartpole_world_env_dual_camera.py`
+itself — that class has no access to rendered frames or events at all (by
+design: physics simulation and event conversion are deliberately separate
+layers), so it structurally can't compute anything event-derived. The
+wrapper's `step()` is the only place with access to both the real reward
+and the event tensor in the same call.
+
+**`terminated` is deliberately NOT touched by shaping**, ever. Letting the
+agent's own (noisy, learned) event perception decide when its episode ends
+would be circular — the environment's physical contract (did the pole
+actually fall) shouldn't depend on how well the agent currently perceives
+it. Only `reward` is event-derived; termination stays ground-truth.
+
+The formula, in `EventsOnlyCartpoleWrapper.step()`:
+
+```python
+event_magnitude = float(obs.mean())               # NOT obs.sum()
+shaping = -event_shaping_coef * event_magnitude
+reward = reward + shaping                          # ground-truth +1, minus a motion penalty
+```
+
+`obs.mean()`, not `obs.sum()`, and this isn't just a style choice:
+`_counts_to_frame()` repeats each real per-pixel value across `channels`
+identical copies (to match STNet's 3-channel conv input) — summing over
+that triples the real magnitude for no reason, while `mean()` is exactly
+invariant to duplication (averaging N copies of a value returns that same
+value). `mean()` also stays in a comparable range regardless of
+`obs_height`/`obs_width`/`n_bins`/`channels`, where `sum()` would scale with
+all of them — meaning one `event_shaping_coef` stays meaningful even if
+those change later.
+
+**`event_shaping_coef=2.0` (default) is measured, not guessed — and it's
+coupled to `--v2e_pos_thres`/`--v2e_neg_thres`, not portable across them.**
+300 real steps through the actual pipeline (`CartpoleWorldDualCameraEnv` +
+the real `v2e` converter, random actions — see the git history for the
+exact throwaway diagnostic script) measured `obs.mean()` at
+`--v2e_pos_thres 0.05 --v2e_neg_thres 0.05` (`max_count` left at its own
+default, `5.0`): typically ~0.012, rising to ~0.018 at the 90th percentile
+(busier moments). `coef=2.0` there gives a shaping term of roughly
+0.024–0.035 per step — about 2–4% of the `+1` survival reward, a deliberate
+gentle nudge rather than a dominant signal (too large risks the agent
+learning to minimize motion instead of actually balancing, since real
+balancing requires continuous small corrective actions that themselves
+generate events).
+
+**This does not transfer to v2e's own default thresholds (0.2/0.2).**
+Those measured ~17x sparser (see the "Measured event density" section
+above) — the same `coef=2.0` there would shape by roughly 15–20x less,
+close to a no-op. `fake` was deliberately excluded from this calibration
+entirely (v2e is the only converter this project actually uses going
+forward) — pass `--v2e_pos_thres 0.05 --v2e_neg_thres 0.05` alongside
+`--reward_shaping event_stillness`, or re-measure and re-derive the
+coefficient for whatever thresholds you actually use. Don't assume `2.0`
+transfers.
+
+`render_checkpoint_video.py --reward_shaping event_stillness` also prints
+each episode's summed shaping term (`shaping_sum`) alongside the real
+reward, so you can sanity-check the shaping magnitude against the
+ground-truth `+1`/step ceiling without digging through training logs.
 
 ## `env/rgb_to_event/v2e_events.py` — `V2EEventGenerator`, the real RGB-to-event converter
 
@@ -406,7 +486,11 @@ Wires everything above into one runnable script.
   extractor, then calls `model.learn()` with `WandbCallback`, the chosen
   reset callback (`TemporalResetCallback` or `StatelessTemporalCallback`, via
   `--stateless_temporal`), `CheckpointCallback`, and
-  `SafeVecNormalizeSaveCallback` attached.
+  `SafeVecNormalizeSaveCallback` attached. `VecNormalize` sees whatever
+  `reward` `EventsOnlyCartpoleWrapper.step()` returns -- with
+  `--reward_shaping event_stillness` that's already the shaped value (real
+  reward + motion penalty), so no separate handling was needed here; it's
+  normalized exactly like the unshaped reward always was.
 - **`resolve_checkpoint_path`/`resolve_vecnormalize_path`** — `--resume_model`
   accepts a bare name or full path; the matching `VecNormalize` stats file is
   located automatically by pattern-matching the model checkpoint's own
@@ -414,9 +498,13 @@ Wires everything above into one runnable script.
   state if no match exists.
 
 Key CLI knobs: `--env_id`/`--camera_name` (which real environment/camera to
-use), `--stateless_temporal` (the recurrence ablation), `--checkpoint_freq`
-(how often to save a resumable checkpoint — matters since cluster jobs can
-hit their time limit or get preempted mid-run).
+use), `--event_source` (`"fake"` or `"v2e"`), `--max_count`/`--event_threshold`/
+`--v2e_pos_thres`/`--v2e_neg_thres`/`--v2e_device` (event-density tuning, see
+the "Measured event density" section), `--reward_shaping`/`--event_shaping_coef`
+(see "Reward shaping" above), `--stateless_temporal` (the recurrence
+ablation), `--checkpoint_freq` (how often to save a resumable checkpoint —
+matters since cluster jobs can hit their time limit or get preempted
+mid-run).
 
 ## `scripts/render_checkpoint_video.py` — visual evaluation
 
@@ -432,6 +520,18 @@ resets every step instead — otherwise you'd be evaluating the model under a
 different reset policy than it was actually trained under, which would make
 the results misleading. Records `env.render()` (the true visual scene) for
 the video, not the event tensors the policy actually sees underneath.
+
+Every knob that shapes the observation/reward distribution a checkpoint was
+trained under (`--event_source`, `--max_count`, `--event_threshold`,
+`--v2e_pos_thres`/`--v2e_neg_thres`/`--v2e_device`, `--reward_shaping`/
+`--event_shaping_coef`) is mirrored here from `train.py`, same "must match
+what this checkpoint was actually trained with" contract as `--env_id`/
+`--camera_name` — a mismatch doesn't error, it silently evaluates the
+policy on a different distribution than it learned on. With
+`--reward_shaping event_stillness`, each episode's summed shaping term
+(`shaping_sum`) prints alongside the real reward, and the final summary adds
+`shaping_sum_mean` — a quick sanity check on shaping magnitude without
+digging through training logs.
 
 ## `env/rgb_to_event/` — verification status of the real (`v2e`) converter
 

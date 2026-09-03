@@ -27,9 +27,17 @@ observation (4 elements for CartpoleWorld-v0, 8 for CartpoleWorldDualCamera-v0)
 is read internally (MujocoEnv.step()/reset() require it) but never returned
 to the agent -- this wrapper's own observation_space and the values it
 returns are built entirely from event-derived frames, regardless of which
-real env or how many ground-truth dimensions it has. Reward, terminated, and
-truncated are passed through from the real env unchanged (those aren't part
-of the events-only constraint -- only the observation is).
+real env or how many ground-truth dimensions it has. terminated/truncated
+are passed through from the real env unchanged and UNSHAPED -- termination
+stays ground-truth on purpose (see reward_shaping below), since letting the
+agent's own noisy event perception decide when the episode ends would be
+circular: the environment's physical contract (did the pole actually fall)
+shouldn't depend on how well the agent currently perceives it.
+
+reward_shaping="event_stillness" (default "none", so this changes nothing
+unless explicitly opted into) ADDS an event-derived penalty on top of the
+real env's ground-truth +1 survival reward -- see step()'s inline comments
+for the exact formula and event_shaping_coef's calibration notes.
 """
 import os
 import sys
@@ -76,12 +84,30 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         v2e_pos_thres: float = 0.2,
         v2e_neg_thres: float = 0.2,
         v2e_device: str = "cpu",
+        reward_shaping: str = "none",
+        event_shaping_coef: float = 2.0,
         seed: Optional[int] = None,
     ):
         super().__init__()
         if event_source not in ("fake", "v2e"):
             raise ValueError(f"event_source must be 'fake' or 'v2e', got {event_source!r}")
         self.event_source = event_source
+        if reward_shaping not in ("none", "event_stillness"):
+            raise ValueError(f"reward_shaping must be 'none' or 'event_stillness', got {reward_shaping!r}")
+        self.reward_shaping = reward_shaping
+        # CALIBRATION, event_source="v2e" only (measured, not guessed --
+        # see README's "Reward shaping" section for the full methodology):
+        # 2.0 is tuned against --v2e_pos_thres 0.05 --v2e_neg_thres 0.05
+        # (max_count stays at its own default, 5.0), where obs.mean() is
+        # typically ~0.012 -- coef=2.0 there gives a shaping term of
+        # ~0.024-0.035, i.e. roughly 2-4% of the +1 survival reward, a
+        # gentle nudge rather than a dominant signal. At v2e's OWN default
+        # thresholds (0.2/0.2, ~17x sparser -- see README), obs.mean() is
+        # ~15-20x smaller, so this same coefficient would be a near no-op;
+        # pass --v2e_pos_thres 0.05 --v2e_neg_thres 0.05 alongside
+        # reward_shaping="event_stillness", or re-derive the coefficient,
+        # rather than assuming this default transfers across thresholds.
+        self.event_shaping_coef = event_shaping_coef
         # env_id/camera_name must match: "CartpoleWorld-v0" only has camera
         # "side" (the old default); "CartpoleWorldDualCamera-v0" only has
         # "world" (3rd-person convenience view) and "pole" (the true
@@ -205,6 +231,27 @@ class EventsOnlyCartpoleWrapper(gym.Env):
         else:
             obs = self._events_to_obs_fake(self._prev_frame_small, curr_small)
             self._prev_frame_small = curr_small
+
+        # reward_shaping="event_stillness": penalize event activity, i.e.
+        # motion, on top of (not instead of) the real env's ground-truth
+        # +1 survival reward. obs.mean() -- not obs.sum() -- is the reason
+        # this is safe to scale with one coefficient regardless of
+        # obs_height/obs_width/n_bins/channels: mean() is invariant to the
+        # channel-duplication _counts_to_frame() does (repeating a value 3x
+        # and averaging gives back the original value, where summing would
+        # triple it) and to how many pixels/bins/frames obs actually has, so
+        # it's a stable, resolution-independent proxy for "how much changed
+        # this step" -- unlike the raw event count, which visibly depends on
+        # obs_height*obs_width*n_bins.
+        # terminated is INTENTIONALLY left untouched here -- see the module
+        # docstring for why termination stays ground-truth even under shaping.
+        if self.reward_shaping == "event_stillness":
+            event_magnitude = float(obs.mean())
+            shaping = -self.event_shaping_coef * event_magnitude
+            reward = reward + shaping
+            info["event_magnitude"] = event_magnitude
+            info["reward_shaping"] = shaping
+
         return obs, reward, terminated, truncated, info
 
     def render(self):
