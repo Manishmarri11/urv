@@ -14,7 +14,27 @@ by default, confirmed by reading encoder.py).
 """
 import os
 
+import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
+
+
+def _skew_and_excess_kurtosis(values: np.ndarray):
+    """Population (biased) skewness and Fisher/excess kurtosis.
+
+    Computed with numpy rather than scipy.stats deliberately: callbacks.py is
+    imported unconditionally by train.py, so a hard scipy dependency here
+    would take down ALL training anywhere scipy happens to be missing (it was
+    absent from a working venv during development, despite being listed in
+    pyproject.toml). These formulas match scipy.stats.skew/kurtosis at their
+    default settings (bias=True, fisher=True) exactly, so nothing is lost.
+    """
+    centered = values - values.mean()
+    m2 = np.mean(centered ** 2)
+    m3 = np.mean(centered ** 3)
+    m4 = np.mean(centered ** 4)
+    skew = m3 / (m2 ** 1.5)
+    excess_kurtosis = m4 / (m2 ** 2) - 3.0
+    return float(skew), float(excess_kurtosis)
 
 
 class TemporalResetCallback(BaseCallback):
@@ -104,3 +124,61 @@ class SafeVecNormalizeSaveCallback(BaseCallback):
                         f"{type(e).__name__}: {e} -- continuing training without this checkpoint's stats."
                     )
         return True
+
+
+class PoleAngleStatsCallback(BaseCallback):
+    """Logs per-rollout distribution statistics of the pole's absolute
+    deviation from upright, in degrees.
+
+    WHY THIS IS WORTH LOGGING SEPARATELY FROM REWARD: the pole angle is
+    ground-truth state the agent deliberately cannot see (event_wrapper.py
+    strips it from the observation), which makes it an INDEPENDENT measure of
+    whether the policy is genuinely balancing rather than just surviving.
+    ep_rew_mean and ep_len_mean are the same number by construction here --
+    reward is +1 per surviving step -- so neither distinguishes "held the pole
+    near-vertical for 20 steps" from "wobbled at the edge of the termination
+    threshold for 20 steps". These angle statistics do.
+
+    Reads `pole_tilt_abs_deg` out of the per-step `info` dicts that
+    EventsOnlyCartpoleWrapper._with_pole_tilt() puts there. `info` is
+    diagnostic metadata, never fed to the policy, so this does not weaken the
+    events-only constraint -- see that method's docstring.
+
+    Aggregation is per ROLLOUT (SB3's iteration -- the batch of steps between
+    PPO updates), matching the granularity ep_len_mean/ep_rew_mean are already
+    logged at, so all curves share an x-axis.
+
+    Reference points for reading the numbers: episodes terminate once either
+    hinge exceeds 0.2 rad (~11.46 deg), so the combined tilt lives roughly in
+    [0, 16.2] deg; a well-balanced policy should show a LOW mean with LOW std.
+    Kurtosis is Fisher/excess (0 = Gaussian-tailed).
+    """
+
+    def _on_rollout_start(self) -> None:
+        self._tilts = []
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []) or []:
+            tilt = info.get("pole_tilt_abs_deg")
+            if tilt is not None:
+                self._tilts.append(tilt)
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if not self._tilts:
+            return  # env didn't supply tilt info (unknown env layout) -- log nothing
+        tilts = np.asarray(self._tilts, dtype=np.float64)
+
+        self.logger.record("angle/tilt_abs_deg_mean", float(tilts.mean()))
+        self.logger.record("angle/tilt_abs_deg_std", float(tilts.std()))
+        self.logger.record("angle/tilt_abs_deg_median", float(np.median(tilts)))
+        self.logger.record("angle/tilt_abs_deg_p95", float(np.percentile(tilts, 95)))
+        self.logger.record("angle/tilt_abs_deg_max", float(tilts.max()))
+
+        # skew/kurtosis are undefined for a constant series and unstable for a
+        # handful of samples -- scipy would return nan and pollute the plots,
+        # so guard rather than record garbage.
+        if tilts.size >= 4 and tilts.std() > 0.0:
+            skew, excess_kurtosis = _skew_and_excess_kurtosis(tilts)
+            self.logger.record("angle/tilt_abs_deg_skew", skew)
+            self.logger.record("angle/tilt_abs_deg_kurtosis", excess_kurtosis)

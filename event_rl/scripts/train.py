@@ -35,7 +35,12 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from encoder import EventEncoder
 from make_env import make_env
-from callbacks import TemporalResetCallback, StatelessTemporalCallback, SafeVecNormalizeSaveCallback
+from callbacks import (
+    TemporalResetCallback,
+    StatelessTemporalCallback,
+    SafeVecNormalizeSaveCallback,
+    PoleAngleStatsCallback,
+)
 
 
 def resolve_checkpoint_path(resume_model: str) -> str:
@@ -320,7 +325,14 @@ def main():
         # CheckpointCallback: periodic saves so a run cut off by the cluster's
         # time limit (or pre-emption) has something to --resume_model from,
         # instead of only ever saving once at the very end.
-        callback=[WandbCallback(), reset_callback, checkpoint_callback, vecnormalize_callback],
+        # PoleAngleStatsCallback: per-rollout stats of the pole's absolute
+        # deviation from upright. The angle is ground-truth state the agent
+        # cannot see, so it's an INDEPENDENT check on whether the policy is
+        # actually balancing -- ep_rew_mean/ep_len_mean are identical by
+        # construction here (+1 per surviving step) and so cannot distinguish
+        # "held near-vertical" from "wobbled at the termination threshold".
+        callback=[WandbCallback(), reset_callback, checkpoint_callback,
+                   vecnormalize_callback, PoleAngleStatsCallback()],
     )
 
     model.save(os.path.join("saved_models", experiment_name))
