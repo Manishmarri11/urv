@@ -5,12 +5,12 @@
 # installed. Re-run it any time pyproject.toml's dependency list changes.
 set -e  # stop immediately on any real error, rather than limping on
 
-# ADJUST: module name for Python 3.13 depends on your cluster's module system.
-# `module avail python` lists what's actually offered -- pick the closest
-# match to 3.13 (pyproject.toml requires >=3.13; if only an older Python is
-# available, lower requires-python in pyproject.toml to match reality rather
-# than fighting the cluster's module system).
-module load python/3.13 2>/dev/null || echo "WARNING: 'module load python/3.13' failed -- check 'module avail python' for the right name on this cluster and edit this line."
+# CONFIRMED on Unity (2026-09): `module avail python` offers up to 3.12.3,
+# no 3.13 -- pyproject.toml's requires-python (>=3.12) already accommodates
+# this, so no compromise needed, just the right module name. If your cluster
+# differs, `module avail python` lists what's actually offered; pick the
+# closest match to what pyproject.toml requires.
+module load python/3.12 2>/dev/null || echo "WARNING: 'module load python/3.12' failed -- check 'module avail python' for the right name on this cluster and edit this line."
 
 cd "$(dirname "$0")/.."   # move to event_rl/ regardless of where this was invoked from
 echo "Setting up venv in: $(pwd)/.venv"
