@@ -17,7 +17,7 @@
 # cut off by an earlier 03:00:00 limit one iteration short of finishing.
 # 04:00:00 gives real margin instead of finishing right at the wire.
 
-module load python/3.13 2>/dev/null || true
+module load python/3.12 2>/dev/null || true  # 3.12 = what setup_cluster_env.sh builds the venv with (Unity has no 3.13)
 source .venv/bin/activate
 
 export MUJOCO_GL=egl

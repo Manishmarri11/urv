@@ -33,7 +33,7 @@
 # train.py's defaults -- those defaults have changed once already, silently
 # changing what scripts like this ran without any edit to the script itself.
 
-module load python/3.13 2>/dev/null || true
+module load python/3.12 2>/dev/null || true  # 3.12 = what setup_cluster_env.sh builds the venv with (Unity has no 3.13)
 source .venv/bin/activate
 
 export MUJOCO_GL=egl

@@ -18,7 +18,7 @@
 # relying on someone else's shared environment having everything this
 # project needs (it was missing wandb and pillow, found by inspection).
 
-module load python/3.13 2>/dev/null || true  # match whatever setup_cluster_env.sh used
+module load python/3.12 2>/dev/null || true  # 3.12 = what setup_cluster_env.sh builds the venv with (Unity has no 3.13)
 # Relative to CWD, consistent with scripts/preflight_check.py and
 # scripts/train.py below -- this whole script assumes `sbatch` was run from
 # inside event_rl/, same as setup_cluster_env.sh's instructions.

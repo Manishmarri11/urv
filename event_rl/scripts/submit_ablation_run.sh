@@ -15,7 +15,7 @@
 # contributing much (each observation already spans its own 5-bin window);
 # notably worse performance means the recurrence is doing real work.
 
-module load python/3.13 2>/dev/null || true
+module load python/3.12 2>/dev/null || true  # 3.12 = what setup_cluster_env.sh builds the venv with (Unity has no 3.13)
 source .venv/bin/activate
 
 export MUJOCO_GL=egl
